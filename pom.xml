@@ -766,6 +766,12 @@
             <version>1.18.3</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.sleepycat</groupId>
+            <artifactId>je</artifactId>
+            <version>3.3.75</version>
+        </dependency>
+
         <!-- Netty network framework -->
         <dependency>
             <groupId>io.netty</groupId>

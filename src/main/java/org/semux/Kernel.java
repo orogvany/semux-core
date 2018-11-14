@@ -34,6 +34,7 @@ import org.semux.db.DatabaseFactory;
 import org.semux.db.DatabaseName;
 import org.semux.db.LeveldbDatabase;
 import org.semux.db.LeveldbDatabase.LeveldbFactory;
+import org.semux.db.berkeley.BerkeleyFactory;
 import org.semux.event.KernelBootingEvent;
 import org.semux.event.PubSub;
 import org.semux.event.PubSubFactory;
@@ -96,6 +97,8 @@ public class Kernel {
     protected SemuxSync sync;
     protected SemuxBft bft;
 
+    private boolean useLevelDb = false;
+
     /**
      * Creates a kernel instance and initializes it.
      * 
@@ -136,7 +139,11 @@ public class Kernel {
         // initialize blockchain database
         // ====================================
         relocateDatabaseIfNeeded();
-        dbFactory = new LeveldbFactory(config.databaseDir());
+        if(useLevelDb) {
+            dbFactory = new LeveldbFactory(config.databaseDir());
+        } else {
+            dbFactory = new BerkeleyFactory(config.dataDir());
+        }
         chain = new BlockchainImpl(config, dbFactory);
         long number = chain.getLatestBlockNumber();
         logger.info("Latest block number = {}", number);

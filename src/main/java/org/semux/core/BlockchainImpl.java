@@ -22,6 +22,8 @@ import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.ethereum.vm.client.BlockStore;
+import org.ethereum.vm.program.InternalTransaction;
+import org.semux.Network;
 import org.semux.config.Config;
 import org.semux.config.Constants;
 import org.semux.core.Genesis.Premine;
@@ -395,7 +397,34 @@ public class BlockchainImpl implements Blockchain {
             listener.onBlockAdded(block);
         }
 
+        // [8] if enabled, add internal transactions
+        for (TransactionResult result : block.getResults()) {
+            if (result.getInternalTransactions() != null) {
+                for (InternalTransaction internalTransaction : result.getInternalTransactions()) {
+                    Transaction tx = mapInternalTransaction(block.getTimestamp(), internalTransaction);
+                    addTransactionToAccount(tx, internalTransaction.getFrom());
+                    if (!Arrays.equals(internalTransaction.getFrom(), tx.getTo())) {
+                        addTransactionToAccount(tx, tx.getTo());
+                    }
+                }
+            }
+        }
+
         activateForks(number + 1);
+    }
+
+    /**
+     * Convert internal transaction to normal transaction
+     * 
+     * @param internalTransaction
+     * @return
+     */
+    private Transaction mapInternalTransaction(long timestamp, InternalTransaction internalTransaction) {
+        Transaction tx = new Transaction(config.network(), TransactionType.INTERNAL, internalTransaction.getTo(),
+                Amount.Unit.NANO_SEM.of(internalTransaction.getValue().longValue()), Amount.ZERO,
+                internalTransaction.getNonce(),
+                timestamp, internalTransaction.getData());
+        return tx;
     }
 
     @Override

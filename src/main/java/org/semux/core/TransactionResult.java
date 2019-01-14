@@ -8,10 +8,13 @@ package org.semux.core;
 
 import org.ethereum.vm.DataWord;
 import org.ethereum.vm.LogInfo;
+
+import java.beans.Transient;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.bouncycastle.util.encoders.Hex;
+import org.ethereum.vm.program.InternalTransaction;
 import org.semux.Network;
 import org.semux.util.Bytes;
 import org.semux.util.SimpleDecoder;
@@ -161,6 +164,14 @@ public class TransactionResult {
     protected long gasUsed;
 
     /**
+     * Internal Transactions
+     *
+     * This field is *not* persisted to save on disk use. Some implementations may
+     * wish to persist these separately
+     */
+    protected List<InternalTransaction> internalTransactions;
+
+    /**
      * Create a transaction result.
      *
      * 
@@ -218,6 +229,14 @@ public class TransactionResult {
 
     public void setGasUsed(long gasUsed) {
         this.gasUsed = gasUsed;
+    }
+
+    public void setInternalTransactions(List<InternalTransaction> internalTransactions) {
+        this.internalTransactions = internalTransactions;
+    }
+
+    public List<InternalTransaction> getInternalTransactions() {
+        return internalTransactions;
     }
 
     public byte[] toBytes() {

@@ -11,6 +11,7 @@ import org.ethereum.vm.chainspec.Spec;
 import org.ethereum.vm.client.BlockStore;
 import org.ethereum.vm.client.Repository;
 import org.ethereum.vm.client.TransactionReceipt;
+import org.ethereum.vm.program.InternalTransaction;
 import org.ethereum.vm.program.invoke.ProgramInvokeFactory;
 import org.ethereum.vm.program.invoke.ProgramInvokeFactoryImpl;
 import org.semux.config.Config;
@@ -252,6 +253,7 @@ public class TransactionExecutor {
             for (LogInfo log : summary.getLogs()) {
                 result.addLog(log);
             }
+            result.setInternalTransactions(summary.getInternalTransactions());
             result.setGasUsed(summary.getGasUsed());
             result.setReturnData(summary.getReturnData());
             result.setCode(summary.isSuccess() ? Code.SUCCESS : Code.FAILURE);

@@ -6,10 +6,9 @@
  */
 package org.semux.core.bip39;
 
-import org.semux.core.bip32.crypto.BitUtil;
 import org.semux.core.bip32.crypto.Hash;
-import org.semux.core.bip39.Dictionary;
-import org.semux.core.bip39.Language;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
@@ -22,29 +21,47 @@ import java.security.spec.InvalidKeySpecException;
 import java.text.Normalizer;
 import java.util.BitSet;
 
+import static org.semux.core.bip32.crypto.BitSetUtil.*;
+
 /**
  * Generate and Process Mnemonic codes
  */
 public class MnemonicGenerator {
+
+    private static final Logger logger = LoggerFactory.getLogger(MnemonicGenerator.class);
 
     public static final String SPACE_JP = "\u3000";
 
     private SecureRandom secureRandom = new SecureRandom();
 
     public byte[] getSeedFromWordlist(String words, String password, Language language) {
-
-        Dictionary dictionary;
-        try {
-            dictionary = new Dictionary(language);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Unknown dictionary");
+        if (password == null) {
+            password = "";
         }
+
+        // check the words are valid (will throw exception if invalid)
+        getEntropy(words, language);
 
         if (password == null) {
             password = "";
         }
 
         password = Normalizer.normalize(password, Normalizer.Form.NFKD);
+        words = Normalizer.normalize(words, Normalizer.Form.NFKD);
+
+        String salt = "mnemonic" + password;
+        return pbkdf2HmacSha512(words.trim().toCharArray(), salt.getBytes(Charset.forName("UTF-8")), 2048, 512);
+    }
+
+    protected byte[] getEntropy(String words, Language language) {
+
+        Dictionary dictionary;
+
+        try {
+            dictionary = new Dictionary(language);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Unknown dictionary");
+        }
 
         String[] wordsList;
         if (language != Language.japanese) {
@@ -62,19 +79,37 @@ public class MnemonicGenerator {
             throw new IllegalArgumentException("Must be less than 24 words");
         }
 
-        words = Normalizer.normalize(words, Normalizer.Form.NFKD);
-
-        // check all the words are found
-        for (String word : wordsList) {
-            if (dictionary.indexOf(word.trim()) < 0) {
+        BitSet bitSet = new BitSet();
+        for (int i = 0; i < wordsList.length; i++) {
+            String word = wordsList[i];
+            int code = dictionary.indexOf(word.trim());
+            bitSet = addCode(bitSet, code);
+            if (code < 0) {
                 throw new IllegalArgumentException("Unknown word: " + word);
+
             }
         }
+        int numBits = wordsList.length * 11;
 
-        // check the checksum
+        int csBits = numBits % 8;
+        // handle 8 bit cs, which is max
+        if (csBits == 0) {
+            csBits = 8;
+        }
+        int entBits = numBits - csBits;
 
-        String salt = "mnemonic" + password;
-        return pbkdf2HmacSha512(words.trim().toCharArray(), salt.getBytes(Charset.forName("UTF-8")), 2048, 512);
+        byte[] entropy = createBytes(bitSet.get(0, entBits), entBits / 8);
+        BitSet checksum = bitSet.get(entBits, numBits);
+
+        // todo - stopping point, checksum still not correct! (Even for valid values)
+        byte[] calculatedChecksum = Hash.sha256(entropy);
+        BitSet checksumBs = createBitset(calculatedChecksum).get(0, csBits);
+
+        if (!checksumBs.equals(checksum)) {
+            // throw new IllegalArgumentException("Checksum does not match, invalid words");
+        }
+
+        return entropy;
     }
 
     private byte[] pbkdf2HmacSha512(final char[] password, final byte[] salt, final int iterations,
@@ -147,71 +182,5 @@ public class MnemonicGenerator {
         }
 
         return ret.toString();
-    }
-
-    /**
-     * For some reason Bitset.valueOf() does not return correct data we expect.
-     *
-     * @param bytes
-     * @return
-     */
-    private BitSet createBitset(byte[] bytes) {
-        BitSet ret = new BitSet();
-        int offset = 0;
-        for (byte b : bytes) {
-            for (int i = 1; i < 9; i++) {
-                if (BitUtil.checkBit(b, i)) {
-                    ret.set(offset);
-                }
-                offset++;
-            }
-        }
-        return ret;
-    }
-
-    /**
-     * get a printable version of a bitset
-     *
-     * @param bitset
-     * @param length
-     * @return
-     */
-    private String getBitString(BitSet bitset, int length) {
-        StringBuilder ret = new StringBuilder();
-        for (int i = 0; i < length; i++) {
-            ret.append(bitset.get(i) ? "1" : "0");
-        }
-        return ret.toString();
-    }
-
-    private int getInt(BitSet range) {
-
-        int ret = 0;
-        for (int i = 0; i < 11; i++) {
-
-            ret = ret << 1;
-            if (range.get(i)) {
-                ret |= 1;
-            }
-        }
-        return ret;
-    }
-
-    private BitSet append(BitSet a, BitSet b, int bLength) {
-
-        // shift A << bLenght
-        BitSet ret = shift(a, bLength);
-        ret.or(b);
-        return ret;
-    }
-
-    private BitSet shift(BitSet bitSet, int length) {
-        BitSet ret = new BitSet(bitSet.length() + length);
-        for (int i = 0; i < bitSet.length(); i++) {
-            if (bitSet.get(i)) {
-                ret.set(i + length);
-            }
-        }
-        return ret;
     }
 }

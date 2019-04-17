@@ -17,7 +17,7 @@ public class MnemonicGeneratorTest {
 
     private static final Logger logger = LoggerFactory.getLogger(MnemonicGeneratorTest.class);
 
-    public static final char jpSpace = '\u3000';
+    private static final char jpSpace = '\u3000';
 
     @Test
     public void testHappyPath() {

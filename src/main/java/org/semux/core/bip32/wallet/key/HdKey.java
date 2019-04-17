@@ -8,7 +8,7 @@
 package org.semux.core.bip32.wallet.key;
 
 import org.semux.core.bip32.crypto.Hash;
-import org.semux.core.bip32.exception.CryptoException;
+import org.semux.crypto.CryptoException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

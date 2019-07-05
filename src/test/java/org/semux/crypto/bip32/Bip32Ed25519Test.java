@@ -8,13 +8,27 @@ package org.semux.crypto.bip32;
 
 import static org.junit.Assert.assertEquals;
 
+import net.i2p.crypto.eddsa.EdDSAEngine;
+import net.i2p.crypto.eddsa.EdDSAPrivateKey;
+import net.i2p.crypto.eddsa.EdDSAPublicKey;
+import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable;
+import net.i2p.crypto.eddsa.spec.EdDSAParameterSpec;
+import net.i2p.crypto.eddsa.spec.EdDSAPrivateKeySpec;
+import net.i2p.crypto.eddsa.spec.EdDSAPublicKeySpec;
+import org.junit.Assert;
 import org.junit.Test;
+import org.semux.crypto.CryptoException;
 import org.semux.crypto.Hex;
+import org.semux.crypto.bip32.key.HdPublicKey;
 import org.semux.crypto.bip32.key.KeyVersion;
 import org.semux.crypto.bip39.Language;
 import org.semux.crypto.bip39.MnemonicGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.UnsupportedEncodingException;
+import java.security.InvalidKeyException;
+import java.security.SignatureException;
 
 public class Bip32Ed25519Test {
 
@@ -86,5 +100,68 @@ public class Bip32Ed25519Test {
         assertEquals(kL + kR, Hex.encode(child3.getPrivateKey().getKeyData()));
         assertEquals(A, Hex.encode(child3.getPublicKey().getKeyData()));
         assertEquals(c, Hex.encode(child3.getPublicKey().getChainCode()));
+    }
+
+    @Test
+    public void testChildKeyGeneration() throws UnsupportedEncodingException {
+
+        HdKeyPair key = generator.getChildKeyPair(root, 0, false);
+
+
+        EdDSAParameterSpec spec = EdDSANamedCurveTable.getByName("ed25519");
+
+        EdDSAPrivateKey sk = new EdDSAPrivateKey(new EdDSAPrivateKeySpec(spec, key.getPrivateKey().getKeyData()));
+        EdDSAPublicKey pk = new EdDSAPublicKey(new EdDSAPublicKeySpec(key.getPublicKey().getKeyData(), spec));
+
+        String test = "Here's a message";
+
+        byte[] sig = sign(sk, test.getBytes());
+        boolean verified = verify(test.getBytes(), sig, pk);
+
+        Assert.assertTrue(verified);
+    }
+
+    @Test
+    public void testChildChainGeneration() {
+        HdKeyPair key = generator.getChildKeyPair(root, 0, false);
+
+        // child key /0/0
+        HdPublicKey childPublicKey = generator.getChildPublicKey(key.getPublicKey(),0, false,  Scheme.BIP32_ED25519);
+        childPublicKey = generator.getChildPublicKey(childPublicKey,0, false, Scheme.BIP32_ED25519);
+
+        HdKeyPair childKey = generator.getChildKeyPair(key, 0, false);
+        childKey = generator.getChildKeyPair(childKey, 0, false);
+
+        Assert.assertArrayEquals(childPublicKey.getKeyData(), childKey.getPublicKey().getKeyData());
+
+
+    }
+    private static byte[] sign(EdDSAPrivateKey sk, byte[] message) {
+        try {
+            byte[] sig;
+
+            EdDSAEngine engine = new EdDSAEngine();
+            engine.initSign(sk);
+            sig = engine.signOneShot(message);
+
+            return sig;
+        } catch (SignatureException | InvalidKeyException e) {
+            throw new CryptoException(e);
+        }
+    }
+
+    private static boolean verify(byte[] message, byte[] signature, EdDSAPublicKey pubKey) {
+        if (message != null && signature != null) {
+            try {
+
+                EdDSAEngine engine = new EdDSAEngine();
+                engine.initVerify(pubKey);
+                return engine.verifyOneShot(message, signature);
+            } catch (Exception e) {
+                System.err.println(e.getMessage());
+            }
+        }
+
+        return false;
     }
 }

@@ -35,9 +35,7 @@ import org.semux.rules.KernelRule;
 import org.semux.util.Bytes;
 import org.semux.util.TimeUtil;
 
-/**
- */
-@RunWith(MockitoJUnitRunner.class)
+@RunWith(MockitoJUnitRunner.Silent.class)
 public class ConsoleDialogTest extends AssertJSwingJUnitTestCase {
 
     @Rule
@@ -74,7 +72,7 @@ public class ConsoleDialogTest extends AssertJSwingJUnitTestCase {
         when(blockChain.getBlock(anyLong())).thenReturn(block);
         kernelRule1.getKernel().setBlockchain(blockChain);
 
-        console.textBox("txtInput").enterText("getBlockByNumber 1\n");
+        console.textBox("txtInput").enterText("getBlockByNumber \"1\"\n");
 
         await().until(() -> consoleText.text().contains("transactionsRoot"));
     }

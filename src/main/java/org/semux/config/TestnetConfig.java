@@ -16,8 +16,9 @@ public class TestnetConfig extends AbstractConfig {
 
     public TestnetConfig(String dataDir) {
         super(dataDir, Network.TESTNET, Constants.TESTNET_VERSION);
-        // testnet allows a much larger block size for performance tuning (10MB)
-        maxBlockTransactionsSize = 10 * 1024 * 1024;
+
+        this.forkUniformDistributionEnabled = true;
+        this.forkVirtualMachineEnabled = true;
     }
 
     @Override
@@ -28,7 +29,19 @@ public class TestnetConfig extends AbstractConfig {
     }
 
     @Override
-    public Map<Fork, Long> forkActivationCheckpoints() {
+    public Map<Fork, Long> manuallyActivatedForks() {
         return Collections.emptyMap();
+    }
+
+    /**
+     * Testnet maxes out at 10 validators to stop dead validators from breaking
+     * concensus
+     * 
+     * @param number
+     * @return
+     */
+    @Override
+    public int getNumberOfValidators(long number) {
+        return Math.min(10, super.getNumberOfValidators(number));
     }
 }

@@ -46,6 +46,9 @@ public class MainnetConfig extends AbstractConfig {
 
     public MainnetConfig(String dataDir) {
         super(dataDir, Network.MAINNET, Constants.MAINNET_VERSION);
+
+        this.forkUniformDistributionEnabled = true;
+        this.forkVirtualMachineEnabled = false;
     }
 
     @Override
@@ -54,7 +57,7 @@ public class MainnetConfig extends AbstractConfig {
     }
 
     @Override
-    public Map<Fork, Long> forkActivationCheckpoints() {
+    public Map<Fork, Long> manuallyActivatedForks() {
         return forkActivationCheckpoints;
     }
 }

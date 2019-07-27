@@ -33,6 +33,7 @@ import org.semux.config.exception.ConfigException;
 import org.semux.core.Block;
 import org.semux.core.Blockchain;
 import org.semux.core.Fork;
+import org.semux.core.Genesis;
 import org.semux.core.Transaction;
 import org.semux.core.Wallet;
 import org.semux.core.event.WalletLoadingEvent;
@@ -46,7 +47,7 @@ import org.semux.event.PubSub;
 import org.semux.event.PubSubFactory;
 import org.semux.exception.LauncherException;
 import org.semux.gui.dialog.AddressBookDialog;
-import org.semux.gui.dialog.CreateHdWalletDialog;
+import org.semux.gui.dialog.InitializeHdWalletDialog;
 import org.semux.gui.dialog.InputDialog;
 import org.semux.gui.dialog.SelectDialog;
 import org.semux.gui.event.MainFrameStartedEvent;
@@ -58,7 +59,6 @@ import org.semux.gui.model.WalletModel.Status;
 import org.semux.message.GuiMessages;
 import org.semux.net.Peer;
 import org.semux.net.filter.exception.IpFilterJsonParseException;
-import org.semux.util.FileUtil;
 import org.semux.util.SystemUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +70,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * Graphic user interface.
  */
 public class SemuxGui extends Launcher {
+
+    public static final boolean HD_WALLET_ENABLED = true;
 
     private static final Logger logger = LoggerFactory.getLogger(SemuxGui.class);
 
@@ -130,7 +132,7 @@ public class SemuxGui extends Launcher {
      * Creates a new Semux GUI instance.
      */
     public SemuxGui() {
-        SystemUtil.setLocale(getConfig().locale());
+        SystemUtil.setLocale(getConfig().uiLocale());
         SwingUtil.setDefaultFractionDigits(getConfig().uiFractionDigits());
         SwingUtil.setDefaultUnit(getConfig().uiUnit());
 
@@ -145,7 +147,7 @@ public class SemuxGui extends Launcher {
      * @param kernel
      */
     public SemuxGui(WalletModel model, Kernel kernel) {
-        SystemUtil.setLocale(getConfig().locale());
+        SystemUtil.setLocale(getConfig().uiLocale());
 
         this.model = model;
         this.kernel = kernel;
@@ -197,8 +199,27 @@ public class SemuxGui extends Launcher {
             unlockWallet(wallet);
         }
 
-        if (!wallet.isHdWalletInitialized()) {
-            initializeHdWallet(wallet);
+        // in case HD wallet is enabled, make sure the seed is properly initialized.
+        if (HD_WALLET_ENABLED) {
+            if (!wallet.isHdWalletInitialized()) {
+                initializedHdSeed(wallet);
+            }
+            if (!wallet.isHdWalletInitialized()) {
+                System.exit(SystemUtil.Code.FAILED_TO_INIT_HD_WALLET);
+            }
+        }
+
+        // add an account is wallet is empty
+        if (wallet.size() == 0) {
+            Key key;
+            if (HD_WALLET_ENABLED) {
+                key = wallet.addAccountWithNextHdKey();
+            } else {
+                key = wallet.addAccountRandom();
+            }
+            wallet.flush();
+
+            logger.info(GuiMessages.get("NewAccountCreatedForAddress", key.toAddressString()));
         }
 
         // setup splash screen
@@ -223,9 +244,11 @@ public class SemuxGui extends Launcher {
         }
     }
 
-    private void initializeHdWallet(Wallet wallet) {
-
-        CreateHdWalletDialog dialog = new CreateHdWalletDialog(wallet, main);
+    /**
+     * Shows the InitializeHdWalletDialog.
+     */
+    protected void initializedHdSeed(Wallet wallet) {
+        InitializeHdWalletDialog dialog = new InitializeHdWalletDialog(wallet, main);
         dialog.setVisible(true);
         dialog.dispose();
     }
@@ -252,19 +275,14 @@ public class SemuxGui extends Launcher {
                         GuiMessages.get("WarningDialogTitle"),
                         JOptionPane.WARNING_MESSAGE);
             }
-
-            if (getConfig().getFile().exists() && !FileUtil.isPosixPermissionSecured(getConfig().getFile())) {
-                JOptionPane.showMessageDialog(
-                        null,
-                        GuiMessages.get("WarningConfigPosixPermission"),
-                        GuiMessages.get("WarningDialogTitle"),
-                        JOptionPane.WARNING_MESSAGE);
-            }
         }
     }
 
     protected void unlockWallet(Wallet wallet) {
-        if (getPassword() != null) {
+        // check empty password
+        if (wallet.unlock("")) {
+            // do nothing
+        } else if (getPassword() != null) {
             if (!wallet.unlock(getPassword())) {
                 JOptionPane.showMessageDialog(
                         null,
@@ -302,12 +320,6 @@ public class SemuxGui extends Launcher {
      */
     protected int setupCoinbase(Wallet wallet) {
         pubSub.publish(new WalletLoadingEvent());
-
-        // create an account is empty
-        if (wallet.size() == 0) {
-            wallet.addAccount();
-            wallet.flush();
-        }
 
         // use the coinbase specified in arguments
         if (getCoinbase() != null && getCoinbase() >= 0 && getCoinbase() < wallet.size()) {
@@ -348,7 +360,7 @@ public class SemuxGui extends Launcher {
         model.setCoinbase(coinbase);
 
         // set up kernel
-        kernel = new Kernel(config, wallet, coinbase);
+        kernel = new Kernel(config, Genesis.load(config.network()), wallet, coinbase);
         kernel.start();
 
         // initialize the model with latest block

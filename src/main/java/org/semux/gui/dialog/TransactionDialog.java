@@ -6,8 +6,12 @@
  */
 package org.semux.gui.dialog;
 
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+
 import javax.swing.GroupLayout;
 import javax.swing.GroupLayout.Alignment;
+import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -15,21 +19,29 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.LayoutStyle.ComponentPlacement;
 
-import org.ethereum.vm.util.HashUtil;
 import org.semux.core.Transaction;
 import org.semux.core.TransactionResult;
-import org.semux.core.TransactionType;
 import org.semux.crypto.Hex;
+import org.semux.gui.Action;
 import org.semux.gui.SwingUtil;
 import org.semux.message.GuiMessages;
+import org.semux.util.exception.UnreachableException;
 
-public class TransactionDialog extends JDialog {
+public class TransactionDialog extends JDialog implements ActionListener {
 
     private static final long serialVersionUID = 1L;
+
+    private JFrame parent;
+    private Transaction tx;
+    private TransactionResult result;
 
     public TransactionDialog(JFrame parent, Transaction tx, TransactionResult result) {
         super(null, GuiMessages.get("Transaction"), ModalityType.MODELESS);
         setName("TransactionDialog");
+
+        this.parent = parent;
+        this.tx = tx;
+        this.result = result;
 
         JLabel lblHash = new JLabel(GuiMessages.get("Hash") + ":");
         JLabel lblType = new JLabel(GuiMessages.get("Type") + ":");
@@ -40,11 +52,9 @@ public class TransactionDialog extends JDialog {
         JLabel lblNonce = new JLabel(GuiMessages.get("Nonce") + ":");
         JLabel lblTimestamp = new JLabel(GuiMessages.get("Timestamp") + ":");
         JLabel lblData = new JLabel(GuiMessages.get("Data") + ":");
-
-        JLabel lblGasUsed = new JLabel(GuiMessages.get("GasUsed"));
-        JLabel lblOutput = new JLabel(GuiMessages.get("Output"));
-
-        String notAvailable = GuiMessages.get("NotAvailable");
+        JLabel lblGas = new JLabel(GuiMessages.get("Gas"));
+        JLabel lblGasPrice = new JLabel(GuiMessages.get("GasPrice"));
+        JLabel lblTransactionResult = new JLabel(GuiMessages.get("TransactionResult"));
 
         JTextArea hash = SwingUtil.textAreaWithCopyPopup(Hex.encode0x(tx.getHash()));
         hash.setName("hashText");
@@ -53,11 +63,6 @@ public class TransactionDialog extends JDialog {
         JTextArea from = SwingUtil.textAreaWithCopyPopup(Hex.encode0x(tx.getFrom()));
         from.setName("fromText");
         JTextArea to = SwingUtil.textAreaWithCopyPopup(Hex.encode0x(tx.getTo()));
-
-        // for creates, the TO value should display the contract address
-        if (tx.getType() == TransactionType.CREATE) {
-            to.setText(Hex.encode0x(HashUtil.calcNewAddress(tx.getFrom(), tx.getNonce())));
-        }
         to.setName("toText");
         JLabel value = new JLabel(SwingUtil.formatAmount((tx.getValue())));
         value.setName("valueText");
@@ -67,21 +72,17 @@ public class TransactionDialog extends JDialog {
         nonce.setName("nonceText");
         JLabel timestamp = new JLabel(SwingUtil.formatTimestamp(tx.getTimestamp()));
         timestamp.setName("timestampText");
-
-        String gasUsedValue = result == null ? notAvailable : SwingUtil.formatNumber(result.getGasUsed());
-        JLabel gasUsed = new JLabel(gasUsedValue);
-        gasUsed.setName("gasUsedText");
-
-        String outputValue = result == null ? notAvailable : Hex.encode0x(result.getReturnData());
-        JTextArea output = SwingUtil.textAreaWithCopyPopup(outputValue);
-        output.setName("outputText");
-        output.setLineWrap(true);
-        JScrollPane outputScroll = new JScrollPane(output);
-
         JTextArea data = SwingUtil.textAreaWithCopyPopup(Hex.encode0x(tx.getData()));
         data.setName("dataText");
         data.setLineWrap(true);
         JScrollPane dataScroll = new JScrollPane(data);
+        JLabel gas = new JLabel(SwingUtil.formatNumber(tx.getGas()));
+        gas.setName("gasText");
+        JLabel gasPrice = new JLabel(SwingUtil.formatAmount(tx.getGasPrice()));
+        gasPrice.setName("gasPriceText");
+        JButton display = SwingUtil
+                .createDefaultButton(GuiMessages.get("Display"), this, Action.SHOW_TRANSACTION_RESULT);
+        display.setName("display");
 
         // @formatter:off
         GroupLayout groupLayout = new GroupLayout(getContentPane());
@@ -90,8 +91,9 @@ public class TransactionDialog extends JDialog {
                 .addGroup(groupLayout.createSequentialGroup()
                     .addGap(42)
                     .addGroup(groupLayout.createParallelGroup(Alignment.TRAILING)
-                        .addComponent(lblOutput)
-                        .addComponent(lblGasUsed)
+                        .addComponent(lblTransactionResult)
+                        .addComponent(lblGasPrice)
+                        .addComponent(lblGas)
                         .addComponent(lblData)
                         .addComponent(lblTimestamp)
                         .addComponent(lblNonce)
@@ -112,8 +114,9 @@ public class TransactionDialog extends JDialog {
                         .addComponent(nonce)
                         .addComponent(timestamp)
                         .addComponent(dataScroll, GroupLayout.PREFERRED_SIZE, 450, GroupLayout.PREFERRED_SIZE)
-                        .addComponent(gasUsed)
-                        .addComponent(outputScroll, GroupLayout.PREFERRED_SIZE, 450, GroupLayout.PREFERRED_SIZE))
+                        .addComponent(gas)
+                        .addComponent(gasPrice)
+                        .addComponent(display))
                     .addContainerGap(19, Short.MAX_VALUE))
         );
         groupLayout.setVerticalGroup(
@@ -157,12 +160,16 @@ public class TransactionDialog extends JDialog {
                         .addComponent(dataScroll, GroupLayout.PREFERRED_SIZE, 60, GroupLayout.PREFERRED_SIZE))
                     .addPreferredGap(ComponentPlacement.UNRELATED)
                     .addGroup(groupLayout.createParallelGroup(Alignment.BASELINE)
-                        .addComponent(lblGasUsed)
-                        .addComponent(gasUsed))
+                        .addComponent(lblGas)
+                        .addComponent(gas))
                     .addPreferredGap(ComponentPlacement.UNRELATED)
                     .addGroup(groupLayout.createParallelGroup(Alignment.BASELINE)
-                        .addComponent(lblOutput)
-                        .addComponent(outputScroll, GroupLayout.PREFERRED_SIZE, 60, GroupLayout.PREFERRED_SIZE))
+                        .addComponent(lblGasPrice)
+                        .addComponent(gasPrice))
+                    .addPreferredGap(ComponentPlacement.UNRELATED)
+                    .addGroup(groupLayout.createParallelGroup(Alignment.BASELINE)
+                        .addComponent(lblTransactionResult)
+                        .addComponent(display))
                     .addContainerGap(20, Short.MAX_VALUE))
         );
         getContentPane().setLayout(groupLayout);
@@ -174,5 +181,21 @@ public class TransactionDialog extends JDialog {
         this.pack();
         this.setLocationRelativeTo(parent);
         this.setResizable(false);
+    }
+
+    @Override
+    public synchronized void actionPerformed(ActionEvent e) {
+        Action action = Action.valueOf(e.getActionCommand());
+
+        switch (action) {
+        case SHOW_TRANSACTION_RESULT:
+            if (result != null) {
+                TransactionResultDialog dialog = new TransactionResultDialog(parent, tx, result);
+                dialog.setVisible(true);
+            }
+            break;
+        default:
+            throw new UnreachableException();
+        }
     }
 }

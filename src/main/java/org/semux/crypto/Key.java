@@ -14,11 +14,8 @@ import java.security.SignatureException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Arrays;
+import java.util.Collection;
 
-import net.i2p.crypto.eddsa.spec.EdDSAParameterSpec;
-import net.i2p.crypto.eddsa.spec.EdDSAPrivateKeySpec;
-import org.apache.commons.lang3.builder.EqualsBuilder;
-import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.semux.crypto.cache.PublicKeyCache;
 import org.semux.util.Bytes;
 import org.semux.util.SystemUtil;
@@ -31,6 +28,8 @@ import net.i2p.crypto.eddsa.EdDSAPublicKey;
 import net.i2p.crypto.eddsa.KeyPairGenerator;
 import net.i2p.crypto.eddsa.spec.EdDSANamedCurveSpec;
 import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable;
+import net.i2p.crypto.eddsa.spec.EdDSAParameterSpec;
+import net.i2p.crypto.eddsa.spec.EdDSAPrivateKeySpec;
 import net.i2p.crypto.eddsa.spec.EdDSAPublicKeySpec;
 
 /**
@@ -201,6 +200,21 @@ public class Key {
         return false;
     }
 
+    public static boolean isVerifyBatchSupported() {
+        return Native.isEnabled();
+    }
+
+    public static boolean verifyBatch(Collection<byte[]> messages, Collection<Signature> signatures) {
+        if (!isVerifyBatchSupported()) {
+            throw new UnsupportedOperationException("Key#verifyBatch is only implemented in the native library.");
+        }
+
+        return Native.verifyBatch(
+                messages.toArray(new byte[messages.size()][]),
+                signatures.stream().map(Signature::getS).toArray(byte[][]::new),
+                signatures.stream().map(Signature::getA).toArray(byte[][]::new));
+    }
+
     /**
      * Verifies a signature.
      * 
@@ -330,20 +344,12 @@ public class Key {
             if (o == null || getClass() != o.getClass())
                 return false;
 
-            Signature signature = (Signature) o;
-
-            return new EqualsBuilder()
-                    .append(s, signature.s)
-                    .append(a, signature.a)
-                    .isEquals();
+            return Arrays.equals(toBytes(), ((Signature) o).toBytes());
         }
 
         @Override
         public int hashCode() {
-            return new HashCodeBuilder(17, 37)
-                    .append(s)
-                    .append(a)
-                    .toHashCode();
+            return Arrays.hashCode(toBytes());
         }
     }
 
@@ -357,4 +363,16 @@ public class Key {
         return (obj instanceof Key) && Arrays.equals(getPrivateKey(), ((Key) obj).getPrivateKey());
     }
 
+    public static void main(String[] args) {
+        String[] pks = {
+                "302a300506032b6570032100fdd012156d14623082633b18a4d342cd37f07af3c5696e11a0947ab0e0bf7e00",
+                "302a300506032b6570032100dca9f23f1a1d24972697e7ae17b19557e6d8c21fd3a115757ad85a84293dd5de",
+                "302a300506032b6570032100762f583ff654a56040fbcacca0a434f0e23da726bf6750641bac28a16f500691",
+                "302a300506032b6570032100c91464ea6062350e56c980c4bd5b3f183e3b39179b16a84b123e6f077db1eb70",
+        };
+        for (String pk : pks) {
+            byte[] address = Hash.h160(Hex.decode(pk));
+            logger.info(Hex.encode(address));
+        }
+    }
 }

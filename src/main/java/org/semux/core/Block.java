@@ -6,15 +6,19 @@
  */
 package org.semux.core;
 
+import static org.semux.core.Amount.ZERO;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.semux.Network;
 import org.semux.config.Config;
 import org.semux.crypto.Hex;
+import org.semux.crypto.Key;
 import org.semux.crypto.Key.Signature;
 import org.semux.util.MerkleUtil;
 import org.semux.util.SimpleDecoder;
@@ -22,13 +26,11 @@ import org.semux.util.SimpleEncoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.semux.core.Amount.ZERO;
-import static org.semux.core.Amount.sum;
-
 /**
  * Represents a block in the blockchain.
  */
 public class Block {
+
     static final Logger logger = LoggerFactory.getLogger(Block.class);
 
     /**
@@ -44,7 +46,7 @@ public class Block {
     /**
      * The transaction results.
      */
-    private final List<TransactionResult> results;
+    private List<TransactionResult> results;
 
     /**
      * The BFT view and votes.
@@ -55,32 +57,6 @@ public class Block {
     // =========================
     // Auxiliary data
     // =========================
-
-    /**
-     * Encoding of transactions.
-     */
-    protected final byte[] encodedHeader;
-    protected final byte[] encodedTransactions;
-    protected final byte[] encodedResults;
-
-    /**
-     * Transaction indexes
-     */
-    protected final List<Pair<Integer, Integer>> indexes = new ArrayList<>();
-
-    /**
-     * Create a new block, with no BFT information.
-     *
-     * @param header
-     *            a signed block header
-     * @param transactions
-     *            list of transactions
-     * @param results
-     *            list of transaction results
-     */
-    public Block(BlockHeader header, List<Transaction> transactions, List<TransactionResult> results) {
-        this(header, transactions, results, 0, new ArrayList<>());
-    }
 
     /**
      * Create a new block.
@@ -105,31 +81,36 @@ public class Block {
 
         this.view = view;
         this.votes = votes;
+    }
 
-        this.encodedHeader = header.toBytes();
-        SimpleEncoder encTx = new SimpleEncoder();
-        SimpleEncoder encRe = new SimpleEncoder();
-        encTx.writeInt(transactions.size());
-        encRe.writeInt(results.size());
-        for (int i = 0; i < transactions.size(); i++) {
-            int idxTx = encTx.getWriteIndex();
-            int idxRe = encRe.getWriteIndex();
-            encTx.writeBytes(transactions.get(i).toBytes());
-            encRe.writeBytes(results.get(i).toBytes());
-            indexes.add(Pair.of(idxTx, idxRe));
-        }
-        this.encodedTransactions = encTx.toBytes();
-        this.encodedResults = encRe.toBytes();
+    public Block(BlockHeader header, List<Transaction> transactions) {
+        this(header, transactions, new ArrayList<>(), 0, new ArrayList<>());
+    }
+
+    public Block(BlockHeader header, List<Transaction> transactions, List<TransactionResult> results) {
+        this(header, transactions, results, 0, new ArrayList<>());
+    }
+
+    public void setResults(List<TransactionResult> results) {
+        this.results = results;
+    }
+
+    public void setView(int view) {
+        this.view = view;
+    }
+
+    public void setVotes(List<Signature> votes) {
+        this.votes = votes;
     }
 
     /**
      * Validates block header.
      *
      * @param header
-     * @param previous
+     * @param parentHeader
      * @return
      */
-    public static boolean validateHeader(BlockHeader previous, BlockHeader header) {
+    public boolean validateHeader(BlockHeader header, BlockHeader parentHeader) {
         if (header == null) {
             logger.warn("Header was null.");
             return false;
@@ -140,17 +121,17 @@ public class Block {
             return false;
         }
 
-        if (header.getNumber() != previous.getNumber() + 1) {
+        if (header.getNumber() != parentHeader.getNumber() + 1) {
             logger.warn("Header number was not one greater than previous block.");
             return false;
         }
 
-        if (!Arrays.equals(header.getParentHash(), previous.getHash())) {
+        if (!Arrays.equals(header.getParentHash(), parentHeader.getHash())) {
             logger.warn("Header parent hash was not equal to previous block hash.");
             return false;
         }
 
-        if (header.getTimestamp() <= previous.getTimestamp()) {
+        if (header.getTimestamp() <= parentHeader.getTimestamp()) {
             logger.warn("Header timestamp was before previous block.");
             return false;
         }
@@ -166,7 +147,7 @@ public class Block {
      * @param network
      * @return
      */
-    public static boolean validateTransactions(BlockHeader header, List<Transaction> transactions, Network network) {
+    public boolean validateTransactions(BlockHeader header, List<Transaction> transactions, Network network) {
         return validateTransactions(header, transactions, transactions, network);
     }
 
@@ -184,12 +165,24 @@ public class Block {
      *            network
      * @return
      */
-    public static boolean validateTransactions(BlockHeader header, Collection<Transaction> unvalidatedTransactions,
+    public boolean validateTransactions(BlockHeader header, Collection<Transaction> unvalidatedTransactions,
             List<Transaction> allTransactions, Network network) {
+
         // validate transactions
-        boolean valid = unvalidatedTransactions.parallelStream().allMatch(tx -> tx.validate(network));
-        if (!valid) {
-            return false;
+        if (!Key.isVerifyBatchSupported() || unvalidatedTransactions.size() < 3) {
+            if (!unvalidatedTransactions.parallelStream().allMatch(tx -> tx.validate(network))) {
+                return false;
+            }
+        } else {
+            if (!unvalidatedTransactions.parallelStream().allMatch(tx -> tx.validate(network, false))) {
+                return false;
+            }
+
+            if (!Key.verifyBatch(
+                    unvalidatedTransactions.stream().map(Transaction::getHash).collect(Collectors.toList()),
+                    unvalidatedTransactions.stream().map(Transaction::getSignature).collect(Collectors.toList()))) {
+                return false;
+            }
         }
 
         // validate transactions root
@@ -204,7 +197,7 @@ public class Block {
      * @param results
      * @return
      */
-    public static boolean validateResults(BlockHeader header, List<TransactionResult> results) {
+    public boolean validateResults(BlockHeader header, List<TransactionResult> results) {
         // validate results
         for (TransactionResult result : results) {
             if (result.getCode().isRejected()) {
@@ -226,27 +219,26 @@ public class Block {
 
         Amount txsReward = block.getTransactions().stream().map(Transaction::getFee).reduce(ZERO, Amount::sum);
         Amount gasReward = getGasReward(block);
-        Amount reward = sum(sum(config.getBlockReward(block.getNumber()), txsReward), gasReward);
 
-        return reward;
+        return config.spec().getBlockReward(block.getNumber()).add(txsReward).add(gasReward);
     }
 
     /**
      * Retrieve the total gas award for the block
-     * 
+     *
      * @param block
      * @return
      */
     private static Amount getGasReward(Block block) {
         List<Transaction> transactions = block.getTransactions();
         List<TransactionResult> results = block.getResults();
-        long sum = 0;
+        Amount sum = ZERO;
         for (int i = 0; i < transactions.size(); i++) {
             Transaction transaction = transactions.get(i);
             TransactionResult result = results.get(i);
-            sum += (transaction.getGasPrice() * result.getGasUsed());
+            sum = sum.add(transaction.getGasPrice().multiply(result.getGasUsed()));
         }
-        return Amount.Unit.NANO_SEM.of(sum);
+        return sum;
     }
 
     /**
@@ -286,39 +278,12 @@ public class Block {
     }
 
     /**
-     * Sets the BFT view.
-     *
-     * @param view
-     */
-    public void setView(int view) {
-        this.view = view;
-    }
-
-    /**
      * Returns a shallow copy of the votes.
      *
      * @return
      */
     public List<Signature> getVotes() {
         return new ArrayList<>(votes);
-    }
-
-    /**
-     * Sets the votes for this block.
-     *
-     * @param votes
-     */
-    public void setVotes(List<Signature> votes) {
-        this.votes = votes;
-    }
-
-    /**
-     * Returns a shallow copy of the transaction indexes;
-     *
-     * @return
-     */
-    public List<Pair<Integer, Integer>> getTransactionIndices() {
-        return new ArrayList<>(indexes);
     }
 
     /**
@@ -408,7 +373,7 @@ public class Block {
      * @return
      */
     public byte[] getEncodedHeader() {
-        return encodedHeader;
+        return header.toBytes();
     }
 
     /**
@@ -417,7 +382,21 @@ public class Block {
      * @return
      */
     public byte[] getEncodedTransactions() {
-        return encodedTransactions;
+        return getEncodedTransactionsAndIndices().getLeft();
+    }
+
+    public Pair<byte[], List<Integer>> getEncodedTransactionsAndIndices() {
+        List<Integer> indices = new ArrayList<>();
+
+        SimpleEncoder enc = new SimpleEncoder();
+        enc.writeInt(transactions.size());
+        for (Transaction transaction : transactions) {
+            int index = enc.getWriteIndex();
+            enc.writeBytes(transaction.toBytes());
+            indices.add(index);
+        }
+
+        return Pair.of(enc.toBytes(), indices);
     }
 
     /**
@@ -426,7 +405,21 @@ public class Block {
      * @return
      */
     public byte[] getEncodedResults() {
-        return encodedResults;
+        return getEncodedResultsAndIndices().getLeft();
+    }
+
+    public Pair<byte[], List<Integer>> getEncodedResultsAndIndices() {
+        List<Integer> indices = new ArrayList<>();
+
+        SimpleEncoder enc = new SimpleEncoder();
+        enc.writeInt(results.size());
+        for (TransactionResult result : results) {
+            int index = enc.getWriteIndex();
+            enc.writeBytes(result.toBytes());
+            indices.add(index);
+        }
+
+        return Pair.of(enc.toBytes(), indices);
     }
 
     /**
@@ -435,7 +428,7 @@ public class Block {
      * @return
      */
     public byte[] getEncodedVotes() {
-        SimpleEncoder enc = new SimpleEncoder();
+        SimpleEncoder enc = new SimpleEncoder(4 + 4 + votes.size() * Signature.LENGTH);
 
         enc.writeInt(view);
         enc.writeInt(votes.size());
@@ -460,6 +453,13 @@ public class Block {
      * @return
      */
     public static Block fromComponents(byte[] h, byte[] t, byte[] r, byte[] v) {
+        if (h == null) {
+            throw new IllegalArgumentException("Block header can't be null");
+        }
+        if (t == null) {
+            throw new IllegalArgumentException("Block transactions can't be null");
+        }
+
         BlockHeader header = BlockHeader.fromBytes(h);
 
         SimpleDecoder dec = new SimpleDecoder(t);
@@ -469,16 +469,17 @@ public class Block {
             transactions.add(Transaction.fromBytes(dec.readBytes()));
         }
 
-        dec = new SimpleDecoder(r);
         List<TransactionResult> results = new ArrayList<>();
-        n = dec.readInt();
-        for (int i = 0; i < n; i++) {
-            results.add(TransactionResult.fromBytes(dec.readBytes()));
+        if (r != null) {
+            dec = new SimpleDecoder(r);
+            n = dec.readInt();
+            for (int i = 0; i < n; i++) {
+                results.add(TransactionResult.fromBytes(dec.readBytes()));
+            }
         }
 
         int view = 0;
         List<Signature> votes = new ArrayList<>();
-
         if (v != null) {
             dec = new SimpleDecoder(v);
             view = dec.readInt();

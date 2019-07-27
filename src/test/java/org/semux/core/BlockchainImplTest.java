@@ -13,17 +13,16 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.semux.core.Amount.Unit.NANO_SEM;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.powermock.reflect.Whitebox;
 import org.semux.Network;
+import org.semux.TestUtils;
+import org.semux.config.AbstractConfig;
 import org.semux.config.Config;
 import org.semux.config.Constants;
 import org.semux.config.DevnetConfig;
@@ -49,8 +48,8 @@ public class BlockchainImplTest {
     private Key key = new Key();
     private byte[] from = key.toAddress();
     private byte[] to = Bytes.random(20);
-    private Amount value = NANO_SEM.of(20);
-    private Amount fee = NANO_SEM.of(1);
+    private Amount value = Amount.of(20);
+    private Amount fee = Amount.of(1);
     private long nonce = 12345;
     private byte[] data = Bytes.of("test");
     private long timestamp = TimeUtil.currentTimeMillis() - 60 * 1000;
@@ -142,9 +141,9 @@ public class BlockchainImplTest {
 
         Transaction t = chain.getTransaction(tx.getHash());
         assertNotNull(t);
-        assertTrue(Arrays.equals(from, t.getFrom()));
-        assertTrue(Arrays.equals(to, t.getTo()));
-        assertTrue(Arrays.equals(data, t.getData()));
+        assertArrayEquals(from, t.getFrom());
+        assertArrayEquals(to, t.getTo());
+        assertArrayEquals(data, t.getData());
         assertEquals(value, t.getValue());
         assertEquals(nonce, t.getNonce());
         assertEquals(timestamp, t.getTimestamp());
@@ -319,7 +318,7 @@ public class BlockchainImplTest {
         Fork fork = Fork.UNIFORM_DISTRIBUTION;
         Block block = createBlock(1, coinbase, BlockHeaderData.v1(new BlockHeaderData.ForkSignalSet(fork)).toBytes(),
                 Collections.singletonList(tx), Collections.singletonList(res));
-        Whitebox.setInternalState(config, "forkUniformDistributionEnabled", false);
+        TestUtils.setInternalState(config, "forkUniformDistributionEnabled", false, AbstractConfig.class);
         chain = new BlockchainImpl(config, temporaryDBFactory);
         chain.addBlock(block);
     }

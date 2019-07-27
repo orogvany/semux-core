@@ -6,6 +6,10 @@
  */
 package org.semux.core;
 
+import static org.semux.util.Bytes.EMPTY_ADDRESS;
+
+import java.util.Arrays;
+
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.semux.Network;
@@ -16,10 +20,6 @@ import org.semux.crypto.Key;
 import org.semux.crypto.Key.Signature;
 import org.semux.util.SimpleDecoder;
 import org.semux.util.SimpleEncoder;
-
-import java.util.Arrays;
-
-import static org.semux.util.Bytes.EMPTY_ADDRESS;
 
 public class Transaction {
 
@@ -46,8 +46,7 @@ public class Transaction {
     private Signature signature;
 
     private final long gas;
-
-    private final long gasPrice;
+    private final Amount gasPrice; // nanoSEM per gas
 
     /**
      * Create a new transaction.
@@ -64,7 +63,7 @@ public class Transaction {
      * @param gasPrice
      */
     public Transaction(Network network, TransactionType type, byte[] to, Amount value, Amount fee, long nonce,
-            long timestamp, byte[] data, long gas, long gasPrice) {
+            long timestamp, byte[] data, long gas, Amount gasPrice) {
         this.networkId = network.id();
         this.type = type;
         this.to = to;
@@ -88,7 +87,7 @@ public class Transaction {
 
         if (TransactionType.CALL == type || TransactionType.CREATE == type) {
             enc.writeLong(gas);
-            enc.writeLong(gasPrice);
+            enc.writeAmount(gasPrice);
         }
         this.encoded = enc.toBytes();
         this.hash = Hash.h256(encoded);
@@ -123,7 +122,11 @@ public class Transaction {
 
     public Transaction(Network network, TransactionType type, byte[] toAddress, Amount value, Amount fee, long nonce,
             long timestamp, byte[] data) {
-        this(network, type, toAddress, value, fee, nonce, timestamp, data, 0, 0);
+        this(network, type, toAddress, value, fee, nonce, timestamp, data, 0, Amount.ZERO);
+    }
+
+    public boolean isVMTransaction() {
+        return type == TransactionType.CREATE || type == TransactionType.CALL;
     }
 
     /**
@@ -147,15 +150,21 @@ public class Transaction {
      * </p>
      *
      * @param network
+     * @param verifySignature
+     *            Whether to verify the transaction signature or not. This is useful
+     *            when there are multiple transaction signatures that can be
+     *            verified in batch for performance reason.
      * @return true if success, otherwise false
      */
-    public boolean validate(Network network) {
+    public boolean validate(Network network, boolean verifySignature) {
         return hash != null && hash.length == Hash.HASH_LEN
                 && networkId == network.id()
                 && type != null
                 && to != null && to.length == Key.ADDRESS_LEN
-                && value.gte0()
-                && fee.gte0()
+                && (type != TransactionType.CREATE && type != TransactionType.DELEGATE
+                        || Arrays.equals(to, EMPTY_ADDRESS))
+                && value.isNotNegative()
+                && fee.isNotNegative()
                 && nonce >= 0
                 && timestamp > 0
                 && data != null
@@ -163,14 +172,18 @@ public class Transaction {
                 && signature != null && !Arrays.equals(signature.getAddress(), EMPTY_ADDRESS)
 
                 && Arrays.equals(Hash.h256(encoded), hash)
-                && Key.verify(hash, signature)
+                && (!verifySignature || Key.verify(hash, signature))
 
                 // The coinbase key is publicly available. People can use it for transactions.
                 // It won't introduce any fundamental loss to the system but could potentially
                 // cause confusion for block explorer, and thus are prohibited.
                 && (type == TransactionType.COINBASE
-                        || (!Arrays.equals(signature.getAddress(), Constants.COINBASE_ADDRESS) &&
-                                !Arrays.equals(to, Constants.COINBASE_ADDRESS)));
+                        || (!Arrays.equals(signature.getAddress(), Constants.COINBASE_ADDRESS)
+                                && !Arrays.equals(to, Constants.COINBASE_ADDRESS)));
+    }
+
+    public boolean validate(Network network) {
+        return validate(network, true);
     }
 
     /**
@@ -271,7 +284,7 @@ public class Transaction {
         return gas;
     }
 
-    public long getGasPrice() {
+    public Amount getGasPrice() {
         return gasPrice;
     }
 
@@ -294,17 +307,17 @@ public class Transaction {
         long timestamp = decoder.readLong();
         byte[] data = decoder.readBytes();
 
-        long gasPrice = 0;
         long gas = 0;
+        Amount gasPrice = Amount.ZERO;
 
         TransactionType transactionType = TransactionType.of(type);
         if (TransactionType.CALL == transactionType || TransactionType.CREATE == transactionType) {
-            gasPrice = decoder.readLong();
             gas = decoder.readLong();
+            gasPrice = decoder.readAmount();
         }
 
         return new Transaction(Network.of(networkId), transactionType, to, value, fee, nonce, timestamp, data,
-                gasPrice, gas);
+                gas, gasPrice);
     }
 
     /**

@@ -7,7 +7,8 @@
 package org.semux.gui;
 
 import static java.util.Arrays.stream;
-import static org.semux.core.Amount.Unit.SEM;
+
+import static org.semux.core.Unit.SEM;
 import static org.semux.gui.TextContextMenuItem.COPY;
 import static org.semux.gui.TextContextMenuItem.CUT;
 import static org.semux.gui.TextContextMenuItem.PASTE;
@@ -57,8 +58,8 @@ import javax.swing.table.TableColumnModel;
 
 import org.ethereum.vm.util.HashUtil;
 import org.semux.core.Amount;
-import org.semux.core.Amount.Unit;
 import org.semux.core.Transaction;
+import org.semux.core.Unit;
 import org.semux.core.state.Delegate;
 import org.semux.core.state.DelegateState;
 import org.semux.crypto.Hex;
@@ -393,7 +394,7 @@ public class SwingUtil {
      * @return
      */
     private static String formatAmount(Amount a, Unit unit, int fractionDigits, boolean withUnit) {
-        return formatNumber(unit.toDecimal(a, fractionDigits), fractionDigits)
+        return formatNumber(a.toDecimal(fractionDigits, unit), fractionDigits)
                 + (withUnit ? (" " + unit.symbol) : "");
     }
 
@@ -403,7 +404,7 @@ public class SwingUtil {
      * @param unit
      */
     public static void setDefaultUnit(String unit) {
-        SwingUtil.unit = Unit.ofSymbol(unit);
+        SwingUtil.unit = Unit.of(unit);
     }
 
     /**
@@ -423,13 +424,13 @@ public class SwingUtil {
      * @throws ParseException
      */
     public static Amount parseAmount(String str) throws ParseException {
-        Unit theUnit = stream(Unit.values())
+        Unit unit = stream(Unit.values())
                 .filter(u -> str.endsWith(" " + u.symbol))
                 .findAny()
-                .orElse(unit);
-        String strNoUnit = str.replace(" " + theUnit.symbol, "");
+                .orElse(SwingUtil.unit);
+        String strNoUnit = str.replace(" " + unit.symbol, "").trim();
 
-        return theUnit.fromDecimal(parseNumber(strNoUnit));
+        return Amount.of(parseNumber(strNoUnit), unit);
     }
 
     /**

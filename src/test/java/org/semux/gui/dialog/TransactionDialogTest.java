@@ -6,8 +6,8 @@
  */
 package org.semux.gui.dialog;
 
-import static org.semux.core.Amount.Unit.SEM;
 import static org.semux.core.TransactionType.TRANSFER;
+import static org.semux.core.Unit.SEM;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -29,7 +29,7 @@ import org.semux.gui.SwingUtil;
 import org.semux.gui.model.WalletModel;
 import org.semux.rules.KernelRule;
 
-@RunWith(MockitoJUnitRunner.class)
+@RunWith(MockitoJUnitRunner.Silent.class)
 public class TransactionDialogTest extends AssertJSwingJUnitTestCase {
 
     @Rule
@@ -39,13 +39,13 @@ public class TransactionDialogTest extends AssertJSwingJUnitTestCase {
     WalletModel walletModel;
 
     @Test
-    public void testDisplayTransferTransaction() throws InterruptedException {
+    public void testDisplayTransferTransaction() {
         kernelRule1.getKernel().start();
 
         Key from = new Key();
         Key to = new Key();
-        Amount value = SEM.of(1000);
-        Amount fee = SEM.fromDecimal(new BigDecimal("0.05"));
+        Amount value = Amount.of(1000, SEM);
+        Amount fee = Amount.of(new BigDecimal("0.05"), SEM);
         long nonce = 0L;
         long now = Instant.now().toEpochMilli();
         byte[] data = "some data".getBytes();
@@ -53,7 +53,7 @@ public class TransactionDialogTest extends AssertJSwingJUnitTestCase {
                 fee, nonce, now, data).sign(from);
 
         TransactionDialogTestApplication application = GuiActionRunner
-                .execute(() -> new TransactionDialogTestApplication(walletModel, tx, kernelRule1.getKernel()));
+                .execute(() -> new TransactionDialogTestApplication(walletModel, kernelRule1.getKernel(), tx));
 
         FrameFixture window = new FrameFixture(robot(), application);
         DialogFixture dialog = window.show().requireVisible().moveToFront()
@@ -67,8 +67,8 @@ public class TransactionDialogTest extends AssertJSwingJUnitTestCase {
         dialog.label("nonceText").requireVisible().requireText("0");
         dialog.label("timestampText").requireVisible().requireText(SwingUtil.formatTimestamp(now));
         dialog.textBox("dataText").requireVisible().requireText(Hex.encode0x(data));
-        dialog.label("gasUsedText").requireVisible().requireText("0");
-        dialog.textBox("outputText").requireVisible().requireText("0x");
+
+        dialog.button("display").click();
     }
 
     @Override

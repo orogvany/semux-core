@@ -10,13 +10,11 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
 import static org.semux.core.Amount.ZERO;
-import static org.semux.core.Amount.sub;
-import static org.semux.core.Amount.sum;
-import static org.semux.core.Amount.Unit.NANO_SEM;
-import static org.semux.core.Amount.Unit.SEM;
 import static org.semux.core.TransactionResult.Code.INSUFFICIENT_AVAILABLE;
 import static org.semux.core.TransactionResult.Code.INSUFFICIENT_LOCKED;
+import static org.semux.core.Unit.SEM;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -45,7 +43,7 @@ public class TransactionExecutorTest {
     private DelegateState ds;
     private TransactionExecutor exec;
     private Network network;
-    private SemuxBlock bh = null;
+    private SemuxBlock block = null;
 
     @Before
     public void prepare() {
@@ -55,11 +53,12 @@ public class TransactionExecutorTest {
         ds = chain.getDelegateState();
         exec = new TransactionExecutor(config, new SemuxBlockStore(chain));
         network = config.network();
+        block = new SemuxBlock(mock(BlockHeader.class), config.spec().maxBlockGasLimit());
     }
 
     private TransactionResult executeAndCommit(TransactionExecutor exec, Transaction tx, AccountState as,
             DelegateState ds, SemuxBlock bh) {
-        TransactionResult res = exec.execute(tx, as, ds, bh);
+        TransactionResult res = exec.execute(tx, as, ds, bh, chain, 0);
         as.commit();
         ds.commit();
 
@@ -73,8 +72,8 @@ public class TransactionExecutorTest {
         TransactionType type = TransactionType.TRANSFER;
         byte[] from = key.toAddress();
         byte[] to = Bytes.random(20);
-        Amount value = NANO_SEM.of(5);
-        Amount fee = config.minTransactionFee();
+        Amount value = Amount.of(5);
+        Amount fee = config.spec().minTransactionFee();
         long nonce = as.getAccount(from).getNonce();
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = Bytes.random(16);
@@ -84,22 +83,22 @@ public class TransactionExecutorTest {
         assertTrue(tx.validate(network));
 
         // insufficient available
-        TransactionResult result = exec.execute(tx, as.track(), ds.track(), bh);
+        TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
 
-        Amount available = SEM.of(1000);
+        Amount available = Amount.of(1000, SEM);
         as.adjustAvailable(key.toAddress(), available);
 
         // execute but not commit
-        result = exec.execute(tx, as.track(), ds.track(), bh);
+        result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertTrue(result.getCode().isSuccess());
         assertEquals(available, as.getAccount(key.toAddress()).getAvailable());
         assertEquals(ZERO, as.getAccount(to).getAvailable());
 
         // execute and commit
-        result = executeAndCommit(exec, tx, as.track(), ds.track(), bh);
+        result = executeAndCommit(exec, tx, as.track(), ds.track(), block);
         assertTrue(result.getCode().isSuccess());
-        assertEquals(sub(available, sum(value, fee)), as.getAccount(key.toAddress()).getAvailable());
+        assertEquals(available.subtract(value.add(fee)), as.getAccount(key.toAddress()).getAvailable());
         assertEquals(value, as.getAccount(to).getAvailable());
     }
 
@@ -107,35 +106,35 @@ public class TransactionExecutorTest {
     public void testDelegate() {
         Key delegate = new Key();
 
-        Amount available = SEM.of(2000);
+        Amount available = Amount.of(2000, SEM);
         as.adjustAvailable(delegate.toAddress(), available);
 
         TransactionType type = TransactionType.DELEGATE;
         byte[] from = delegate.toAddress();
         byte[] to = Bytes.random(20);
-        Amount value = config.minDelegateBurnAmount();
-        Amount fee = config.minTransactionFee();
+        Amount value = config.spec().minDelegateBurnAmount();
+        Amount fee = config.spec().minTransactionFee();
         long nonce = as.getAccount(from).getNonce();
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = Bytes.random(16);
 
         // register delegate (to != EMPTY_ADDRESS, random name)
         Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(delegate);
-        TransactionResult result = exec.execute(tx, as.track(), ds.track(), bh);
+        TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
 
         // register delegate (to == EMPTY_ADDRESS, random name)
         tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, value, fee, nonce, timestamp, data).sign(delegate);
-        result = exec.execute(tx, as.track(), ds.track(), bh);
+        result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
 
         // register delegate (to == EMPTY_ADDRESS, normal name) and commit
         data = Bytes.of("test");
         tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, value, fee, nonce, timestamp, data).sign(delegate);
 
-        result = executeAndCommit(exec, tx, as.track(), ds.track(), bh);
+        result = executeAndCommit(exec, tx, as.track(), ds.track(), block);
         assertTrue(result.getCode().isSuccess());
-        assertEquals(sub(available, sum(config.minDelegateBurnAmount(), fee)),
+        assertEquals(available.subtract(config.spec().minDelegateBurnAmount().add(fee)),
                 as.getAccount(delegate.toAddress()).getAvailable());
         assertArrayEquals(delegate.toAddress(), ds.getDelegateByName(data).getAddress());
         assertArrayEquals(data, ds.getDelegateByAddress(delegate.toAddress()).getName());
@@ -146,29 +145,29 @@ public class TransactionExecutorTest {
         Key voter = new Key();
         Key delegate = new Key();
 
-        Amount available = SEM.of(100);
+        Amount available = Amount.of(100, SEM);
         as.adjustAvailable(voter.toAddress(), available);
 
         TransactionType type = TransactionType.VOTE;
         byte[] from = voter.toAddress();
         byte[] to = delegate.toAddress();
-        Amount value = SEM.of(33);
-        Amount fee = config.minTransactionFee();
+        Amount value = Amount.of(33, SEM);
+        Amount fee = config.spec().minTransactionFee();
         long nonce = as.getAccount(from).getNonce();
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};
 
         // vote for non-existing delegate
         Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(voter);
-        TransactionResult result = exec.execute(tx, as.track(), ds.track(), bh);
+        TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
 
         ds.register(delegate.toAddress(), Bytes.of("delegate"));
 
         // vote for delegate
-        result = executeAndCommit(exec, tx, as.track(), ds.track(), bh);
+        result = executeAndCommit(exec, tx, as.track(), ds.track(), block);
         assertTrue(result.getCode().isSuccess());
-        assertEquals(sub(available, sum(value, fee)), as.getAccount(voter.toAddress()).getAvailable());
+        assertEquals(available.subtract(value.add(fee)), as.getAccount(voter.toAddress()).getAvailable());
         assertEquals(value, as.getAccount(voter.toAddress()).getLocked());
         assertEquals(value, ds.getDelegateByAddress(delegate.toAddress()).getVotes());
     }
@@ -178,7 +177,7 @@ public class TransactionExecutorTest {
         Key voter = new Key();
         Key delegate = new Key();
 
-        Amount available = SEM.of(100);
+        Amount available = Amount.of(100, SEM);
         as.adjustAvailable(voter.toAddress(), available);
 
         ds.register(delegate.toAddress(), Bytes.of("delegate"));
@@ -186,30 +185,30 @@ public class TransactionExecutorTest {
         TransactionType type = TransactionType.UNVOTE;
         byte[] from = voter.toAddress();
         byte[] to = delegate.toAddress();
-        Amount value = SEM.of(33);
-        Amount fee = config.minTransactionFee();
+        Amount value = Amount.of(33, SEM);
+        Amount fee = config.spec().minTransactionFee();
         long nonce = as.getAccount(from).getNonce();
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};
 
         // unvote (never voted before)
         Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(voter);
-        TransactionResult result = exec.execute(tx, as.track(), ds.track(), bh);
+        TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
         assertEquals(INSUFFICIENT_LOCKED, result.code);
         ds.vote(voter.toAddress(), delegate.toAddress(), value);
 
         // unvote (locked = 0)
-        result = exec.execute(tx, as.track(), ds.track(), bh);
+        result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
         assertEquals(INSUFFICIENT_LOCKED, result.code);
 
         as.adjustLocked(voter.toAddress(), value);
 
         // normal unvote
-        result = executeAndCommit(exec, tx, as.track(), ds.track(), bh);
+        result = executeAndCommit(exec, tx, as.track(), ds.track(), block);
         assertTrue(result.getCode().isSuccess());
-        assertEquals(sum(available, sub(value, fee)), as.getAccount(voter.toAddress()).getAvailable());
+        assertEquals(available.add(value.subtract(fee)), as.getAccount(voter.toAddress()).getAvailable());
         assertEquals(ZERO, as.getAccount(voter.toAddress()).getLocked());
         assertEquals(ZERO, ds.getDelegateByAddress(delegate.toAddress()).getVotes());
     }
@@ -219,14 +218,14 @@ public class TransactionExecutorTest {
         Key voter = new Key();
         Key delegate = new Key();
 
-        as.adjustAvailable(voter.toAddress(), sub(config.minTransactionFee(), NANO_SEM.of(1)));
+        as.adjustAvailable(voter.toAddress(), config.spec().minTransactionFee().subtract(Amount.of(1)));
         ds.register(delegate.toAddress(), Bytes.of("delegate"));
 
         TransactionType type = TransactionType.UNVOTE;
         byte[] from = voter.toAddress();
         byte[] to = delegate.toAddress();
-        Amount value = SEM.of(100);
-        Amount fee = config.minTransactionFee();
+        Amount value = Amount.of(100, SEM);
+        Amount fee = config.spec().minTransactionFee();
         long nonce = as.getAccount(from).getNonce();
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};
@@ -234,7 +233,7 @@ public class TransactionExecutorTest {
         // unvote (never voted before)
         Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(voter);
 
-        TransactionResult result = exec.execute(tx, as.track(), ds.track(), bh);
+        TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, chain, 0);
         assertFalse(result.getCode().isSuccess());
         assertEquals(INSUFFICIENT_AVAILABLE, result.code);
     }

@@ -48,7 +48,7 @@ public class ApiHandlerImpl implements ApiHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(ApiHandlerImpl.class);
 
-    private static final Pattern VERSIONED_PATH = Pattern.compile("/(v[\\.0-9]+)(/.*)");
+    private static final Pattern VERSIONED_PATH = Pattern.compile("/(v[.0-9]+)(/.*)");
 
     private final Map<ApiVersion, Map<ImmutablePair<HttpMethod, String>, Route>> routes = new HashMap<>();
 
@@ -60,6 +60,7 @@ public class ApiHandlerImpl implements ApiHandler {
         this.routes.put(ApiVersion.v2_0_0, routesV2);
         this.routes.put(ApiVersion.v2_1_0, routesV2);
         this.routes.put(ApiVersion.v2_2_0, routesV2);
+        this.routes.put(ApiVersion.v2_3_0, routesV2);
     }
 
     @Override
@@ -78,6 +79,7 @@ public class ApiHandlerImpl implements ApiHandler {
         try {
             return (Response) route.invoke(params);
         } catch (Exception e) {
+            logger.warn("Internal error", e);
             return Response.status(INTERNAL_SERVER_ERROR).entity(HttpHandler.INTERNAL_SERVER_ERROR_RESPONSE).build();
         }
     }
@@ -123,7 +125,7 @@ public class ApiHandlerImpl implements ApiHandler {
                 if (httpMethod != null && path != null) {
                     result.put(ImmutablePair.of(httpMethod, path),
                             new Route(semuxApi, httpMethod, path, methodInterface, methodImpl));
-                    logger.debug("Loaded route: {} {}", httpMethod, path);
+                    logger.trace("Loaded route: {} {}", httpMethod, path);
                 }
             }
         } catch (SecurityException | NoSuchMethodException e) {
@@ -163,22 +165,22 @@ public class ApiHandlerImpl implements ApiHandler {
         }
 
         Object invoke(Map<String, String> params) throws Exception {
-            return this.methodImpl.invoke(
-                    semuxApi,
-                    queryParams.stream().map(p -> {
-                        String param = params.getOrDefault(p.getLeft().value(), null);
+            Object[] args = queryParams.stream().map(p -> {
+                String param = params.getOrDefault(p.getLeft().value(), null);
 
-                        if (param == null) {
-                            return null;
-                        }
+                if (param == null) {
+                    return null;
+                }
 
-                        // convert params
-                        if (p.getRight().equals(Boolean.class)) {
-                            return Boolean.parseBoolean(param);
-                        }
+                // convert params
+                if (p.getRight().equals(Boolean.class)) {
+                    return Boolean.parseBoolean(param);
+                }
 
-                        return param;
-                    }).toArray());
+                return param;
+            }).toArray();
+
+            return this.methodImpl.invoke(semuxApi, args);
         }
     }
 }

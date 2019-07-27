@@ -12,11 +12,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
 import java.util.stream.Collectors;
 
 import org.ethereum.vm.client.BlockStore;
@@ -26,7 +24,6 @@ import org.semux.config.Config;
 import org.semux.config.Constants;
 import org.semux.consensus.SemuxBft.Event.Type;
 import org.semux.consensus.exception.SemuxBftException;
-import org.semux.core.Amount;
 import org.semux.core.BftManager;
 import org.semux.core.Block;
 import org.semux.core.BlockHeader;
@@ -36,7 +33,6 @@ import org.semux.core.SyncManager;
 import org.semux.core.Transaction;
 import org.semux.core.TransactionExecutor;
 import org.semux.core.TransactionResult;
-import org.semux.core.TransactionType;
 import org.semux.core.state.AccountState;
 import org.semux.core.state.DelegateState;
 import org.semux.crypto.Hash;
@@ -156,7 +152,6 @@ public class SemuxBft implements BftManager {
 
     /**
      * Pause the bft manager, and do synchronization.
-     * 
      */
     protected void sync(long target) {
         if (status == Status.RUNNING) {
@@ -233,12 +228,12 @@ public class SemuxBft implements BftManager {
             status = Status.RUNNING;
             timer.start();
             broadcaster.start();
-            logger.info("BftManager started");
+            logger.info("Semux BFT manager started");
 
             enterNewHeight();
             eventLoop();
 
-            logger.info("BftManager stopped");
+            logger.info("Semux BFT manager stopped");
         }
     }
 
@@ -352,7 +347,8 @@ public class SemuxBft implements BftManager {
                 precommitVotes, commitVotes);
 
         // validate block proposal
-        boolean valid = (proposal != null) && validateBlock(proposal.getBlockHeader(), proposal.getTransactions());
+        boolean valid = (proposal != null)
+                && validateBlockProposal(proposal.getBlockHeader(), proposal.getTransactions());
 
         // construct vote
         Vote vote = valid ? Vote.newApprove(VoteType.VALIDATE, height, view, proposal.getBlockHeader().getHash())
@@ -434,7 +430,7 @@ public class SemuxBft implements BftManager {
 
             // [2] add the block to chain
             logger.info(block.toString());
-            applyBlock(block);
+            chain.importBlock(block, false);
         } else {
             sync(height + 1);
         }
@@ -462,7 +458,7 @@ public class SemuxBft implements BftManager {
      * (sorted by latest block number) is greater than local height. This avoids a
      * vulnerability that malicious validators might announce an extremely large
      * height in order to hang sync process of peers.
-     * 
+     *
      * @param newHeight
      *            new height
      */
@@ -471,16 +467,19 @@ public class SemuxBft implements BftManager {
             // update active validators (potential overhead)
             activeValidators = channelMgr.getActiveChannels(validators);
 
-            // Pick 2/3th active validator's height as sync target. The sync will not be
-            // started if there are less than 2 active validators.
-            OptionalLong target = activeValidators.stream()
+            // the heights of active validators
+            long[] heights = activeValidators.stream()
                     .mapToLong(c -> c.getRemotePeer().getLatestBlockNumber() + 1)
                     .sorted()
-                    .limit((int) Math.floor(activeValidators.size() * 2.0 / 3.0))
-                    .max();
+                    .toArray();
 
-            if (target.isPresent() && target.getAsLong() > height) {
-                sync(target.getAsLong());
+            // Needs at least one connected node to start syncing
+            if (heights.length != 0) {
+                int q = (int) Math.ceil(heights.length * 2.0 / 3.0);
+                long h = heights[heights.length - q];
+                if (h > height) {
+                    sync(h);
+                }
             }
         }
     }
@@ -499,7 +498,7 @@ public class SemuxBft implements BftManager {
             }
 
             // switch view
-            logger.debug("Switching view because of NEW_VIEW message");
+            logger.debug("Switching view because of NEW_VIEW message: {}", p.getView());
             jumpToView(p.getView(), p, null);
         }
     }
@@ -508,7 +507,8 @@ public class SemuxBft implements BftManager {
         logger.trace("On proposal: {}", p);
 
         if (p.getHeight() == height // at the same height
-                && (p.getView() == view && proposal == null && (state == State.NEW_HEIGHT || state == State.PROPOSE) // expecting
+                && (p.getView() == view && proposal == null && (state == State.NEW_HEIGHT || state == State.PROPOSE)
+                        // expecting
                         || p.getView() > view && state != State.COMMIT && state != State.FINALIZE) // larger view
                 && isPrimary(p.getHeight(), p.getView(), Hex.encode(p.getSignature().getAddress()))) {
 
@@ -670,14 +670,22 @@ public class SemuxBft implements BftManager {
      * Update the validator sets.
      */
     protected void updateValidators() {
+        int maxValidators = config.spec().getNumberOfValidators(height);
+
         validators = chain.getValidators();
+        // if the chain is reporting a larger number of validators
+        // then a configuration change has occurred (like a stuck testnet)
+        // so honor the configuration value
+        if (validators.size() > maxValidators) {
+            validators = validators.subList(0, maxValidators);
+        }
         activeValidators = channelMgr.getActiveChannels(validators);
         lastUpdate = TimeUtil.currentTimeMillis();
     }
 
     /**
      * Check if this node is a validator.
-     * 
+     *
      * @return
      */
     protected boolean isValidator() {
@@ -695,8 +703,7 @@ public class SemuxBft implements BftManager {
 
     /**
      * Check if a node is the primary for the specified view.
-     * 
-     * 
+     *
      * @param height
      *            block number
      * @param view
@@ -706,14 +713,14 @@ public class SemuxBft implements BftManager {
      * @return
      */
     protected boolean isPrimary(long height, int view, String peerId) {
-        return config
+        return config.spec()
                 .getPrimaryValidator(validators, height, view, chain.isForkActivated(UNIFORM_DISTRIBUTION, height))
                 .equals(peerId);
     }
 
     /**
      * Check if the signature is from one of the validators.
-     * 
+     *
      * @param sig
      * @return
      */
@@ -740,153 +747,136 @@ public class SemuxBft implements BftManager {
 
     /**
      * Create a block for BFT proposal.
-     * 
+     *
      * @return the proposed block
      */
     protected Block proposeBlock() {
         long t1 = TimeUtil.currentTimeMillis();
 
-        // construct block
+        // construct block template
         BlockHeader parent = chain.getBlockHeader(height - 1);
         long number = height;
         byte[] prevHash = parent.getHash();
         long timestamp = TimeUtil.currentTimeMillis();
-        /*
-         * in case the previous block timestamp is drifted too munch, adjust this block
-         * timestamp to avoid invalid blocks (triggered by timestamp rule).
-         *
-         * See https://github.com/semuxproject/semux-core/issues/1
-         */
         timestamp = timestamp > parent.getTimestamp() ? timestamp : parent.getTimestamp() + 1;
-
-        byte[] data = chain.constructBlockData();
-
-        // fetch pending transactions
-        final List<PendingManager.PendingTransaction> pending = pendingMgr
-                .getPendingTransactions(config.maxBlockTransactionsSize());
-        final List<Transaction> pendingTxs = new ArrayList<>();
-        final List<TransactionResult> pendingResults = new ArrayList<>();
-
-        // for any VM requests, actually need to execute them
-        AccountState as = accountState.track();
-        DelegateState ds = delegateState.track();
-        TransactionExecutor exec = new TransactionExecutor(config, blockStore);
+        byte[] data = chain.constructBlockHeaderDataField();
         BlockHeader tempHeader = new BlockHeader(height, coinbase.toAddress(), prevHash, timestamp, new byte[0],
                 new byte[0], new byte[0], data);
 
+        // fetch pending transactions
+        final List<PendingManager.PendingTransaction> pendingTxs = pendingMgr
+                .getPendingTransactions(config.poolBlockGasLimit());
+        final List<Transaction> includedTxs = new ArrayList<>();
+        final List<TransactionResult> includedResults = new ArrayList<>();
+
+        AccountState as = accountState.track();
+        DelegateState ds = delegateState.track();
+        TransactionExecutor exec = new TransactionExecutor(config, blockStore);
+        SemuxBlock semuxBlock = new SemuxBlock(tempHeader, config.spec().maxBlockGasLimit());
+
         // only propose gas used up to configured block gas limit
-        SemuxBlock semuxBlock = new SemuxBlock(tempHeader, config.vmBlockGasLimit());
+        long remainingBlockGas = config.poolBlockGasLimit();
+        for (PendingManager.PendingTransaction pendingTx : pendingTxs) {
+            Transaction tx = pendingTx.transaction;
 
-        long gasUsed = 0;
+            long gas = tx.isVMTransaction() ? tx.getGas() : config.spec().nonVMTransactionGasCost();
+            if (gas > remainingBlockGas) {
+                break;
+            }
 
-        for (PendingManager.PendingTransaction tx : pending) {
-            if (tx.transaction.getType() == TransactionType.CALL
-                    || tx.transaction.getType() == TransactionType.CREATE) {
-                long maxGasForTransaction = tx.transaction.getGas() + gasUsed;
-                if (tx.transaction.getGasPrice() >= config.vmMinGasPrice()
-                        && maxGasForTransaction < config.vmBlockGasLimit()) {
-                    TransactionResult result = exec.execute(tx.transaction, as, ds, semuxBlock);
-                    gasUsed += result.getGasUsed();
-
-                    if (result.getCode().isSuccess() && gasUsed < config.vmBlockGasLimit()) {
-                        pendingResults.add(result);
-                        pendingTxs.add(tx.transaction);
-                    } else {
-                        gasUsed -= result.getGasUsed();
-                    }
-                }
-            } else {
-                pendingResults.add(tx.result);
-                pendingTxs.add(tx.transaction);
+            // re-evaluate the transaction
+            TransactionResult result = exec.execute(tx, as, ds, semuxBlock, chain, 0);
+            if (result.getCode().isAcceptable()) {
+                long gasUsed = tx.isVMTransaction() ? result.getGasUsed() : config.spec().nonVMTransactionGasCost();
+                includedTxs.add(tx);
+                includedResults.add(result);
+                remainingBlockGas -= gasUsed;
             }
         }
 
         // compute roots
-        byte[] transactionsRoot = MerkleUtil.computeTransactionsRoot(pendingTxs);
-        byte[] resultsRoot = MerkleUtil.computeResultsRoot(pendingResults);
+        byte[] transactionsRoot = MerkleUtil.computeTransactionsRoot(includedTxs);
+        byte[] resultsRoot = MerkleUtil.computeResultsRoot(includedResults);
         byte[] stateRoot = Bytes.EMPTY_HASH;
 
         BlockHeader header = new BlockHeader(number, coinbase.toAddress(), prevHash, timestamp, transactionsRoot,
                 resultsRoot, stateRoot, data);
-        Block block = new Block(header, pendingTxs, pendingResults);
+        Block block = new Block(header, includedTxs, includedResults);
 
         long t2 = TimeUtil.currentTimeMillis();
-        logger.debug("Block creation: # txs = {}, time = {} ms", pendingTxs.size(), t2 - t1);
+        logger.debug("Block creation: # txs = {}, time = {} ms", includedTxs.size(), t2 - t1);
 
         return block;
     }
 
     /**
-     * Check if a block proposal is success.
-     * 
-     * @param header
-     * @param transactions
-     * @return
+     * Check if a block proposal is valid.
      */
-    protected boolean validateBlock(BlockHeader header, List<Transaction> transactions) {
-        long t1 = TimeUtil.currentTimeMillis();
+    protected boolean validateBlockProposal(BlockHeader header, List<Transaction> transactions) {
+        try {
+            Block block = new Block(header, transactions);
+            long t1 = TimeUtil.currentTimeMillis();
 
-        // [1] check block header
-        Block latest = chain.getLatestBlock();
-        if (!Block.validateHeader(latest.getHeader(), header)) {
-            logger.warn("Invalid block header");
+            // [1] check block header
+            Block latest = chain.getLatestBlock();
+            if (!block.validateHeader(header, latest.getHeader())) {
+                logger.warn("Invalid block header");
+                return false;
+            }
+
+            if (header.getTimestamp() - TimeUtil.currentTimeMillis() > config.bftMaxBlockTimeDrift()) {
+                logger.warn("A block in the future is not allowed");
+                return false;
+            }
+
+            if (Arrays.equals(header.getCoinbase(), Constants.COINBASE_ADDRESS)) {
+                logger.warn("A block forged by the coinbase magic account is not allowed");
+                return false;
+            }
+
+            if (!Arrays.equals(header.getCoinbase(), proposal.getSignature().getAddress())) {
+                logger.warn("The coinbase should always equal to the proposer's address");
+                return false;
+            }
+
+            // [2] check transactions and results (skipped)
+            List<Transaction> unvalidatedTransactions = getUnvalidatedTransactions(transactions);
+
+            if (!block.validateTransactions(header, unvalidatedTransactions, transactions, config.network())) {
+                logger.warn("Invalid block transactions");
+                return false;
+            }
+
+            if (transactions.stream().anyMatch(tx -> chain.hasTransaction(tx.getHash()))) {
+                logger.warn("Duplicated transaction hash is not allowed");
+                return false;
+            }
+
+            AccountState as = accountState.track();
+            DelegateState ds = delegateState.track();
+            TransactionExecutor exec = new TransactionExecutor(config, blockStore);
+
+            // [3] evaluate transactions
+            // When we are applying or validating block, we do not track transactions
+            // against our own local limit, only when proposing
+            List<TransactionResult> results = exec.execute(transactions, as, ds,
+                    new SemuxBlock(header, config.spec().maxBlockGasLimit()), chain, 0);
+            block.setResults(results);
+
+            if (!block.validateResults(header, results)) {
+                logger.warn("Invalid transactions");
+                return false;
+            }
+
+            long t2 = TimeUtil.currentTimeMillis();
+            logger.debug("Block validation: # txs = {}, time = {} ms", transactions.size(), t2 - t1);
+
+            validBlocks.put(ByteArray.of(block.getHash()), block);
+            return true;
+        } catch (Exception e) {
+            logger.error("Unexpected exception during block proposal validation", e);
             return false;
         }
-
-        if (header.getTimestamp() - TimeUtil.currentTimeMillis() > config.maxBlockTimeDrift()) {
-            logger.warn("A block in the future is not allowed");
-            return false;
-        }
-
-        if (Arrays.equals(header.getCoinbase(), Constants.COINBASE_ADDRESS)) {
-            logger.warn("A block forged by the coinbase magic account is not allowed");
-            return false;
-        }
-
-        if (!Arrays.equals(header.getCoinbase(), proposal.getSignature().getAddress())) {
-            logger.warn("The coinbase should always equal to the proposer's address");
-            return false;
-        }
-
-        // [2] check transactions and results (skipped)
-        List<Transaction> unvalidatedTransactions = getUnvalidatedTransactions(transactions);
-
-        if (!Block.validateTransactions(header, unvalidatedTransactions, transactions, config.network())) {
-            logger.warn("Invalid block transactions");
-            return false;
-        }
-
-        if (transactions.stream().mapToInt(Transaction::size).sum() > config.maxBlockTransactionsSize()) {
-            logger.warn("Block transactions size exceeds maximum");
-            return false;
-        }
-
-        if (transactions.stream().anyMatch(tx -> chain.hasTransaction(tx.getHash()))) {
-            logger.warn("Duplicated transaction hash is not allowed");
-            return false;
-        }
-
-        AccountState as = accountState.track();
-        DelegateState ds = delegateState.track();
-        TransactionExecutor exec = new TransactionExecutor(config, blockStore);
-
-        // [3] evaluate transactions
-        // When we are applying or validating block, we do not track transactions
-        // against our own local limit, only
-        // when proposing
-        List<TransactionResult> results = exec.execute(transactions, as, ds,
-                new SemuxBlock(header, config.vmMaxBlockGasLimit()));
-        if (!Block.validateResults(header, results)) {
-            logger.warn("Invalid transactions");
-            return false;
-        }
-
-        long t2 = TimeUtil.currentTimeMillis();
-        logger.debug("Block validation: # txs = {}, time = {} ms", transactions.size(), t2 - t1);
-
-        Block block = new Block(header, transactions, results);
-        validBlocks.put(ByteArray.of(block.getHash()), block);
-        return true;
     }
 
     /**
@@ -903,72 +893,10 @@ public class SemuxBft implements BftManager {
                 .map(pendingTx -> pendingTx.transaction)
                 .collect(Collectors.toSet());
 
-        List<Transaction> unvalidatedTransactions = transactions
+        return transactions
                 .stream()
                 .filter(it -> !pendingValidatedTransactions.contains(it))
                 .collect(Collectors.toList());
-
-        logger.debug("Block validation: # txs = {}, # txs unvalidated = {}", transactions.size(),
-                unvalidatedTransactions.size());
-
-        return unvalidatedTransactions;
-    }
-
-    /**
-     * Apply a block to the chain.
-     * 
-     * @param block
-     */
-    protected void applyBlock(Block block) {
-        BlockHeader header = block.getHeader();
-        List<Transaction> transactions = block.getTransactions();
-        long number = header.getNumber();
-
-        if (header.getNumber() != chain.getLatestBlockNumber() + 1) {
-            throw new SemuxBftException("Applying wrong block: number = " + header.getNumber());
-        }
-
-        // [1] check block header, skipped
-
-        // [2] check transactions and results, skipped
-
-        AccountState as = chain.getAccountState().track();
-        DelegateState ds = chain.getDelegateState().track();
-        TransactionExecutor exec = new TransactionExecutor(config, blockStore);
-
-        // [3] evaluate all transactions
-        List<TransactionResult> results = exec.execute(transactions, as, ds,
-                new SemuxBlock(block.getHeader(), config.vmMaxBlockGasLimit()));
-        if (!Block.validateResults(header, results)) {
-            logger.debug("Invalid transactions");
-            return;
-        }
-
-        // [4] evaluate votes, skipped
-
-        // [5] apply block reward and tx fees
-        Amount reward = Block.getBlockReward(block, config);
-
-        if (reward.gt0()) {
-            as.adjustAvailable(block.getCoinbase(), reward);
-        }
-
-        // [6] commit the updates
-        as.commit();
-        ds.commit();
-
-        WriteLock lock = kernel.getStateLock().writeLock();
-        lock.lock();
-        try {
-            // [7] flush state to disk
-            chain.getAccountState().commit();
-            chain.getDelegateState().commit();
-
-            // [8] add block to chain
-            chain.addBlock(block);
-        } finally {
-            lock.unlock();
-        }
     }
 
     public enum State {
@@ -978,7 +906,7 @@ public class SemuxBft implements BftManager {
     /**
      * Timer used by consensus. It's designed to be single timeout; previous timeout
      * get cleared when new one being added.
-     * 
+     *
      * NOTE: it's possible that a Timeout event has been emitted when setting a new
      * timeout.
      */

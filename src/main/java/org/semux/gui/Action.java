@@ -11,7 +11,7 @@ public enum Action {
 
     RECOVER_ACCOUNTS,
 
-    RECOVER_HD_WALLET,
+    RESET_MNEMONIC,
 
     SCAN_HD_WALLETS,
 
@@ -79,5 +79,7 @@ public enum Action {
 
     EXPORT_PRIVATE_KEY,
 
-    COPY_PRIVATE_KEY
+    COPY_PRIVATE_KEY,
+
+    SHOW_TRANSACTION_RESULT
 }

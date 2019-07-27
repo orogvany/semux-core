@@ -13,18 +13,13 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static org.semux.core.Amount.ZERO;
-import static org.semux.core.Amount.Unit.NANO_SEM;
 
 import java.awt.event.ActionListener;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -37,7 +32,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InOrder;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.mockito.stubbing.Answer;
@@ -51,13 +45,13 @@ import org.semux.net.Peer;
 @RunWith(MockitoJUnitRunner.class)
 public class WalletModelTest {
 
-    @Mock
     private MainnetConfig config;
 
     private WalletModel model;
 
     @Before
-    public void setUp() throws IOException {
+    public void setUp() {
+        config = spy(new MainnetConfig("data"));
         model = spy(new WalletModel(config));
     }
 
@@ -124,13 +118,13 @@ public class WalletModelTest {
         WalletAccount wa1 = mock(WalletAccount.class);
         WalletAccount wa2 = mock(WalletAccount.class);
         when(wa1.getKey()).thenReturn(new Key());
-        when(wa1.getAvailable()).thenReturn(NANO_SEM.of(1));
+        when(wa1.getAvailable()).thenReturn(Amount.of(1));
         when(wa2.getKey()).thenReturn(new Key());
-        when(wa2.getAvailable()).thenReturn(NANO_SEM.of(2));
+        when(wa2.getAvailable()).thenReturn(Amount.of(2));
 
         assertEquals(ZERO, model.getTotalAvailable());
         model.setAccounts(Arrays.asList(wa1, wa2));
-        assertEquals(NANO_SEM.of(3), model.getTotalAvailable());
+        assertEquals(Amount.of(3), model.getTotalAvailable());
 
         assertThat(model.getAccounts(), equalTo(Arrays.asList(wa1, wa2)));
     }
@@ -140,18 +134,17 @@ public class WalletModelTest {
         WalletAccount wa1 = mock(WalletAccount.class);
         WalletAccount wa2 = mock(WalletAccount.class);
         when(wa1.getKey()).thenReturn(new Key());
-        when(wa1.getLocked()).thenReturn(NANO_SEM.of(1));
+        when(wa1.getLocked()).thenReturn(Amount.of(1));
         when(wa2.getKey()).thenReturn(new Key());
-        when(wa2.getLocked()).thenReturn(NANO_SEM.of(2));
+        when(wa2.getLocked()).thenReturn(Amount.of(2));
 
         assertEquals(ZERO, model.getTotalLocked());
         model.setAccounts(Arrays.asList(wa1, wa2));
-        assertEquals(NANO_SEM.of(3), model.getTotalLocked());
+        assertEquals(Amount.of(3), model.getTotalLocked());
     }
 
     @Test
     public void testGetPrimaryValidatorDelegate() {
-        when(config.getPrimaryValidator(any(), anyLong(), anyInt(), anyBoolean())).thenCallRealMethod();
         model = new WalletModel(config);
         List<WalletDelegate> delegates = Arrays.asList(
                 new WalletDelegate(new Delegate(new Key().toAddress(), "delegate1".getBytes(), 0, Amount.ZERO)),
@@ -170,7 +163,6 @@ public class WalletModelTest {
 
     @Test
     public void testGetNextPrimaryValidatorDelegate() {
-        when(config.getValidatorUpdateInterval()).thenCallRealMethod();
         model = new WalletModel(config);
         List<WalletDelegate> delegates = Arrays.asList(
                 new WalletDelegate(new Delegate(new Key().toAddress(), "delegate1".getBytes(), 0, Amount.ZERO)),
@@ -202,7 +194,6 @@ public class WalletModelTest {
 
     @Test
     public void testGetNextValidatorSetUpdate() {
-        when(config.getValidatorUpdateInterval()).thenCallRealMethod();
         model = new WalletModel(config);
 
         Map<Long, Long> testCases = new HashMap<>();

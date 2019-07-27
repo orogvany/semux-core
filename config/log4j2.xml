@@ -21,7 +21,7 @@
     <Loggers>
         <Logger name="org.semux.api" level="INFO" />
         <Logger name="org.semux.core" level="INFO" />
-        <Logger name="org.semux.consensus" level="INFO" />
+        <Logger name="org.semux.consensus" level="DEBUG" />
         <Logger name="org.semux.db" level="INFO" />
         <Logger name="org.semux.net" level="INFO" />
         <Logger name="org.semux.vm" level="INFO" />
@@ -30,6 +30,8 @@
         <Logger name="io.netty" level="ERROR" />
         <Logger name="io.swagger" level="ERROR" />
         <Logger name="oshi" level="INFO" />
+
+        <Logger name="org.ethereum.vm" level="ERROR" />
 
         <Root level="INFO">
             <AppenderRef ref="Async" />

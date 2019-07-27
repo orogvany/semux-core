@@ -1,14 +1,14 @@
 package org.semux.db.berkeley;
 
-import org.semux.db.Database;
-import org.semux.db.DatabaseFactory;
-import org.semux.db.DatabaseName;
-
 import java.io.File;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.semux.db.Database;
+import org.semux.db.DatabaseFactory;
+import org.semux.db.DatabaseName;
 
 public class BerkeleyFactory implements DatabaseFactory {
 

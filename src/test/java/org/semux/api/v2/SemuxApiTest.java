@@ -43,12 +43,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.semux.TestUtils.createBlock;
 import static org.semux.TestUtils.createTransaction;
-import static org.semux.core.Amount.Unit.NANO_SEM;
-import static org.semux.core.Amount.Unit.SEM;
+import static org.semux.core.TransactionType.CALL;
 import static org.semux.core.TransactionType.COINBASE;
+import static org.semux.core.TransactionType.CREATE;
 import static org.semux.core.TransactionType.TRANSFER;
 import static org.semux.core.TransactionType.UNVOTE;
 import static org.semux.core.TransactionType.VOTE;
+import static org.semux.core.Unit.SEM;
 
 import java.io.File;
 import java.net.InetAddress;
@@ -65,6 +66,7 @@ import java.util.stream.Collectors;
 
 import javax.ws.rs.BadRequestException;
 
+import org.ethereum.vm.util.HashUtil;
 import org.junit.Test;
 import org.semux.Network;
 import org.semux.TestUtils;
@@ -90,6 +92,7 @@ import org.semux.api.v2.model.GetPendingTransactionsResponse;
 import org.semux.api.v2.model.GetSyncingProgressResponse;
 import org.semux.api.v2.model.GetTransactionLimitsResponse;
 import org.semux.api.v2.model.GetTransactionResponse;
+import org.semux.api.v2.model.GetTransactionResultResponse;
 import org.semux.api.v2.model.GetValidatorsResponse;
 import org.semux.api.v2.model.GetVoteResponse;
 import org.semux.api.v2.model.GetVotesResponse;
@@ -99,7 +102,6 @@ import org.semux.api.v2.model.PeerType;
 import org.semux.api.v2.model.SignMessageResponse;
 import org.semux.api.v2.model.SignRawTransactionResponse;
 import org.semux.api.v2.model.SyncingProgressType;
-import org.semux.api.v2.model.TransactionType;
 import org.semux.api.v2.model.VerifyMessageResponse;
 import org.semux.consensus.SemuxSync;
 import org.semux.core.Amount;
@@ -193,7 +195,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
     public void getAccountTest() {
         // create an account
         Key key = new Key();
-        accountState.adjustAvailable(key.toAddress(), SEM.of(1000));
+        accountState.adjustAvailable(key.toAddress(), Amount.of(1000, SEM));
         chain.addBlock(createBlock(
                 chain.getLatestBlockNumber() + 1,
                 Collections.singletonList(createTransaction(config, key, key, Amount.ZERO)),
@@ -202,7 +204,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         // request api endpoint
         GetAccountResponse response = api.getAccount(key.toAddressString());
         assertTrue(response.isSuccess());
-        assertEquals(SEM.of(1000).getNano(), Long.parseLong(response.getResult().getAvailable()));
+        assertEquals(Amount.of(1000, SEM), Amount.of(response.getResult().getAvailable()));
         assertEquals(Integer.valueOf(1), response.getResult().getTransactionCount());
     }
 
@@ -225,9 +227,6 @@ public class SemuxApiTest extends SemuxApiTestBase {
         GetAccountTransactionsResponse response = api.getAccountTransactions(Hex.encode(tx.getFrom()), "0", "1024");
         assertTrue(response.isSuccess());
         assertNotNull(response.getResult());
-        for (TransactionType txType : response.getResult()) {
-            assertEquals(block.getNumber(), Long.parseLong(txType.getBlockNumber()));
-        }
     }
 
     @Test
@@ -237,9 +236,9 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Transaction tx0 = createTransaction(config);
         Transaction tx1 = createTransaction(config, from, to, Amount.ZERO);
         Transaction tx2 = createTransaction(config, to, from, Amount.ZERO);
-        chain.getAccountState().adjustAvailable(tx0.getFrom(), config.minTransactionFee());
-        chain.getAccountState().adjustAvailable(from.toAddress(), config.minTransactionFee());
-        chain.getAccountState().adjustAvailable(to.toAddress(), config.minTransactionFee());
+        chain.getAccountState().adjustAvailable(tx0.getFrom(), config.spec().minTransactionFee());
+        chain.getAccountState().adjustAvailable(from.toAddress(), config.spec().minTransactionFee());
+        chain.getAccountState().adjustAvailable(to.toAddress(), config.spec().minTransactionFee());
         assert (pendingMgr.addTransactionSync(tx0).accepted == 1);
         assert (pendingMgr.addTransactionSync(tx1).accepted == 1);
         assert (pendingMgr.addTransactionSync(tx2).accepted == 1);
@@ -269,7 +268,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         List<Delegate> delegates = delegateState.getDelegates();
         Key voter = new Key();
         for (int i = 0; i < delegates.size(); i++) {
-            delegateState.vote(voter.toAddress(), delegates.get(i).getAddress(), Amount.Unit.NANO_SEM.of(i + 1));
+            delegateState.vote(voter.toAddress(), delegates.get(i).getAddress(), Amount.of(i + 1));
         }
 
         GetAccountVotesResponse resp = api.getAccountVotes(Hex.encode0x(voter.toAddress()));
@@ -437,7 +436,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
     @Test
     public void getTransactionTest() {
         Key from = new Key(), to = new Key();
-        Transaction tx = createTransaction(config, from, to, Amount.Unit.SEM.of(1));
+        Transaction tx = createTransaction(config, from, to, Amount.of(1, SEM));
         TransactionResult res = new TransactionResult();
         Block block = createBlock(chain.getLatestBlockNumber() + 1, Collections.singletonList(tx),
                 Collections.singletonList(res));
@@ -446,15 +445,40 @@ public class SemuxApiTest extends SemuxApiTestBase {
         GetTransactionResponse response = api.getTransaction(Hex.encode(tx.getHash()));
         assertTrue(response.isSuccess());
         assertEquals(Hex.encode0x(to.toAddress()), response.getResult().getTo());
-        assertEquals(block.getNumber(), Long.parseLong(response.getResult().getBlockNumber()));
         assertEquals(Hex.encode0x(tx.getHash()), response.getResult().getHash());
         assertEquals(Hex.encode0x(Bytes.EMPTY_BYTES), response.getResult().getData());
-        assertEquals(tx.getFee().getNano(), Long.parseLong(response.getResult().getFee()));
+        assertEquals(tx.getFee(), Amount.of(response.getResult().getFee()));
         assertEquals(Hex.encode0x(tx.getFrom()), response.getResult().getFrom());
         assertEquals(tx.getNonce(), Long.parseLong(response.getResult().getNonce()));
         assertEquals(tx.getTimestamp(), Long.parseLong(response.getResult().getTimestamp()));
         assertEquals(tx.getType().toString(), response.getResult().getType());
-        assertEquals(tx.getValue().getNano(), Long.parseLong(response.getResult().getValue()));
+        assertEquals(tx.getValue(), Amount.of(response.getResult().getValue()));
+    }
+
+    @Test
+    public void getTransactionReceiptTest() {
+        Key from = new Key(), to = new Key();
+        Transaction tx = createTransaction(config, CREATE, from, to, Amount.of(1, SEM), 1);
+        TransactionResult res = new TransactionResult();
+        Block block = createBlock(chain.getLatestBlockNumber() + 1, Collections.singletonList(tx),
+                Collections.singletonList(res));
+        chain.addBlock(block);
+
+        GetTransactionResultResponse response = api.getTransactionResult(Hex.encode(tx.getHash()));
+        assertTrue(response.isSuccess());
+        assertEquals("SUCCESS", response.getResult().getCode());
+
+        assertEquals(Long.toString(block.getNumber()), response.getResult().getBlockNumber());
+        assertEquals(res.getCode().name(), response.getResult().getCode());
+        assertEquals(tx.getFee(), Amount.of(response.getResult().getFee()));
+        assertEquals("0", response.getResult().getGas());
+        assertEquals("0", response.getResult().getGasPrice());
+        assertEquals("0", response.getResult().getGasUsed());
+        assertTrue(response.getResult().getLogs().isEmpty());
+        assertTrue(response.getResult().getInternalTransactions().isEmpty());
+        assertEquals("0x", response.getResult().getReturnData());
+        String address = Hex.encode0x(HashUtil.calcNewAddress(from.toAddress(), 1));
+        assertEquals(address, response.getResult().getContractAddress());
     }
 
     @Test
@@ -463,14 +487,16 @@ public class SemuxApiTest extends SemuxApiTestBase {
             GetTransactionLimitsResponse response = api.getTransactionLimits(type.toString());
             assertNotNull(response);
             assertTrue(response.isSuccess());
-            assertEquals(config.maxTransactionDataSize(type),
+            assertEquals(config.spec().maxTransactionDataSize(type),
                     response.getResult().getMaxTransactionDataSize().intValue());
-            assertEquals(config.minTransactionFee().getNano(),
-                    Long.parseLong(response.getResult().getMinTransactionFee()));
+            assertEquals(
+                    type.equals(CALL) || type.equals(CREATE) ? Amount.ZERO
+                            : config.spec().minTransactionFee(),
+                    Amount.of(response.getResult().getMinTransactionFee()));
 
             if (type.equals(org.semux.core.TransactionType.DELEGATE)) {
-                assertEquals(config.minDelegateBurnAmount().getNano(),
-                        Long.parseLong(response.getResult().getMinDelegateBurnAmount()));
+                assertEquals(config.spec().minDelegateBurnAmount(),
+                        Amount.of(response.getResult().getMinDelegateBurnAmount()));
             } else {
                 assertNull(response.getResult().getMinDelegateBurnAmount());
             }
@@ -495,7 +521,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Key key2 = new Key();
         DelegateState ds = chain.getDelegateState();
         ds.register(key2.toAddress(), Bytes.of("test"));
-        ds.vote(key.toAddress(), key2.toAddress(), NANO_SEM.of(200));
+        ds.vote(key.toAddress(), key2.toAddress(), Amount.of(200));
 
         GetVoteResponse response = api.getVote(key2.toAddressString(), key.toAddressString());
         assertTrue(response.isSuccess());
@@ -508,7 +534,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Key delegateKey = new Key();
         DelegateState ds = chain.getDelegateState();
         assertTrue(ds.register(delegateKey.toAddress(), Bytes.of("test")));
-        assertTrue(ds.vote(voterKey.toAddress(), delegateKey.toAddress(), NANO_SEM.of(200)));
+        assertTrue(ds.vote(voterKey.toAddress(), delegateKey.toAddress(), Amount.of(200)));
         ds.commit();
 
         GetVotesResponse response = api.getVotes(delegateKey.toAddressString());
@@ -530,9 +556,9 @@ public class SemuxApiTest extends SemuxApiTestBase {
     @Test
     public void registerDelegateTest() throws InterruptedException {
         String from = wallet.getAccount(0).toAddressString();
-        String fee = String.valueOf(config.minTransactionFee().getNano());
+        String fee = config.spec().minTransactionFee().toString();
         String data = Hex.encode(Bytes.of("test_delegate"));
-        DoTransactionResponse response = api.registerDelegate(from, data, fee, null, null);
+        DoTransactionResponse response = api.registerDelegate(from, data, fee, null);
         assertNotNull(response);
         assertTrue(response.isSuccess());
         assertNotNull(response.getResult());
@@ -551,10 +577,10 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Key to = new Key();
         Amount value = Amount.ZERO;
         kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from.toAddress(),
-                config.minTransactionFee());
+                config.spec().minTransactionFee());
         Transaction tx = createTransaction(config, from, to, value);
 
-        DoTransactionResponse response = api.broadcastRawTransaction(Hex.encode(tx.toBytes()), null);
+        DoTransactionResponse response = api.broadcastRawTransaction(Hex.encode(tx.toBytes()));
         assertTrue(response.isSuccess());
 
         Thread.sleep(200);
@@ -571,31 +597,13 @@ public class SemuxApiTest extends SemuxApiTestBase {
 
         // mock state
         kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from.toAddress(),
-                config.minTransactionFee());
+                config.spec().minTransactionFee());
         PendingManager pendingManager = spy(pendingMgr);
         when(pendingManager.getNonce(from.toAddress())).thenReturn(100L);
         kernelRule.getKernel().setPendingManager(pendingManager);
 
         Transaction tx = createTransaction(config, from, to, value, 101L);
-        api.broadcastRawTransaction(Hex.encode(tx.toBytes()), true);
-    }
-
-    @Test
-    public void broadcastRawTransactionNoValidateNonceTest() {
-        Key from = new Key();
-        Key to = new Key();
-        Amount value = Amount.ZERO;
-
-        // mock state
-        kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from.toAddress(),
-                config.minTransactionFee());
-        PendingManager pendingManager = spy(pendingMgr);
-        when(pendingManager.getNonce(from.toAddress())).thenReturn(100L);
-        kernelRule.getKernel().setPendingManager(pendingManager);
-
-        Transaction tx = createTransaction(config, from, to, value, 101L);
-        DoTransactionResponse resp = api.broadcastRawTransaction(Hex.encode(tx.toBytes()), false);
-        assertTrue(resp.isSuccess());
+        api.broadcastRawTransaction(Hex.encode(tx.toBytes()));
     }
 
     @Test
@@ -609,17 +617,17 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String signature = response.getResult();
         VerifyMessageResponse verifyMessageResponse = api.verifyMessage(address, message, signature);
         assertTrue(verifyMessageResponse.isSuccess());
-        assertTrue(verifyMessageResponse.isValidSignature());
+        assertTrue(verifyMessageResponse.isValid());
 
         // verify no messing with fromaddress
         verifyMessageResponse = api.verifyMessage(addressOther, message, signature);
         assertTrue(verifyMessageResponse.isSuccess());
-        assertFalse(verifyMessageResponse.isValidSignature());
+        assertFalse(verifyMessageResponse.isValid());
 
         // verify no messing with message
         verifyMessageResponse = api.verifyMessage(address, message + "other", signature);
         assertTrue(verifyMessageResponse.isSuccess());
-        assertFalse(verifyMessageResponse.isValidSignature());
+        assertFalse(verifyMessageResponse.isValid());
     }
 
     @Test
@@ -630,10 +638,9 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String to = key.toAddressString();
         String fee = "5432100";
         String nonce = null;
-        Boolean validateNonce = null;
         String data = Hex.encode(Bytes.of("test_transfer"));
 
-        DoTransactionResponse response = api.transfer(from, to, value, fee, nonce, validateNonce, data);
+        DoTransactionResponse response = api.transfer(from, to, value, fee, nonce, data);
         assertNotNull(response);
         assertTrue(response.isSuccess());
         assertNotNull(response.getResult());
@@ -645,11 +652,11 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Transaction tx = list.get(list.size() - 1).transaction;
         assertArrayEquals(tx.getHash(), Hex.decode0x(response.getResult()));
         assertEquals(TRANSFER, tx.getType());
-        assertEquals(Amount.Unit.NANO_SEM.of(Long.parseLong(fee)), tx.getFee());
+        assertEquals(Amount.of(fee), tx.getFee());
         assertEquals(data, Hex.encode(tx.getData()));
     }
 
-    @Test
+    @Test(expected = BadRequestException.class)
     public void transferWithHighNonceTest() {
         Key key = new Key();
         String value = "1000000000";
@@ -657,25 +664,9 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String to = key.toAddressString();
         String fee = "5432100";
         String nonce = "999";
-        Boolean validateNonce = null;
         String data = null;
 
-        DoTransactionResponse resp = api.transfer(from, to, value, fee, nonce, validateNonce, data);
-        assertTrue(resp.isSuccess());
-    }
-
-    @Test(expected = BadRequestException.class)
-    public void transferValidateNonceTest() {
-        Key key = new Key();
-        String value = "1000000000";
-        String from = wallet.getAccount(0).toAddressString();
-        String to = key.toAddressString();
-        String fee = "5432100";
-        String nonce = "999";
-        Boolean validateNonce = true;
-        String data = null;
-
-        api.transfer(from, to, value, fee, nonce, validateNonce, data);
+        api.transfer(from, to, value, fee, nonce, data);
     }
 
     @Test
@@ -685,7 +676,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String from = wallet.getAccount(0).toAddressString();
         String to = key.toAddressString();
 
-        DoTransactionResponse response = api.transfer(from, to, value, null, null, null, null);
+        DoTransactionResponse response = api.transfer(from, to, value, null, null, null);
         assertNotNull(response);
         assertTrue(response.isSuccess());
         assertNotNull(response.getResult());
@@ -697,7 +688,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Transaction tx = list.get(list.size() - 1).transaction;
         assertArrayEquals(tx.getHash(), Hex.decode0x(response.getResult()));
         assertEquals(TRANSFER, tx.getType());
-        assertEquals(config.minTransactionFee(), tx.getFee());
+        assertEquals(config.spec().minTransactionFee(), tx.getFee());
     }
 
     @Test
@@ -705,17 +696,17 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Key delegate = new Key();
         delegateState.register(delegate.toAddress(), Bytes.of("test_unvote"));
 
-        Amount amount = NANO_SEM.of(1000000000);
+        Amount amount = Amount.of(1000000000);
         byte[] voter = wallet.getAccounts().get(0).toAddress();
         accountState.adjustLocked(voter, amount);
         delegateState.vote(voter, delegate.toAddress(), amount);
 
         String from = wallet.getAccount(0).toAddressString();
         String to = delegate.toAddressString();
-        String value = String.valueOf(amount.getNano());
+        String value = amount.toString();
         String fee = "50000000";
 
-        DoTransactionResponse response = api.unvote(from, to, value, fee, null, null);
+        DoTransactionResponse response = api.unvote(from, to, value, fee, null);
         assertNotNull(response);
 
         assertTrue(response.isSuccess());
@@ -734,17 +725,17 @@ public class SemuxApiTest extends SemuxApiTestBase {
         Key delegate = new Key();
         delegateState.register(delegate.toAddress(), Bytes.of("test_unvote"));
 
-        Amount amount = NANO_SEM.of(1000000000);
+        Amount amount = Amount.of(1000000000);
         byte[] voter = wallet.getAccounts().get(0).toAddress();
         accountState.adjustLocked(voter, amount);
         delegateState.vote(voter, delegate.toAddress(), amount);
 
         String from = wallet.getAccount(0).toAddressString();
         String to = delegate.toAddressString();
-        String value = String.valueOf(amount.getNano());
-        String fee = String.valueOf(config.minTransactionFee().getNano());
+        String value = amount.toString();
+        String fee = config.spec().minTransactionFee().toString();
 
-        DoTransactionResponse response = api.vote(from, to, value, fee, null, null);
+        DoTransactionResponse response = api.vote(from, to, value, fee, null);
         assertTrue(response.isSuccess());
         assertNotNull(response.getResult());
 
@@ -762,7 +753,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String type = "TRANSFER";
         String to = "0xdb7cadb25fdcdd546fb0268524107582c3f8999c";
         String value = "123456789";
-        String fee = String.valueOf(config.minTransactionFee().getNano());
+        String fee = config.spec().minTransactionFee().toString();
         String nonce = "123";
         String timestamp = "1523028482000";
         String data = Hex.encode0x("test data".getBytes());
@@ -770,12 +761,14 @@ public class SemuxApiTest extends SemuxApiTestBase {
         ComposeRawTransactionResponse resp = api.composeRawTransaction(
                 network,
                 type,
-                fee,
-                nonce,
                 to,
                 value,
+                fee,
+                nonce,
                 timestamp,
-                data);
+                data,
+                null,
+                null);
 
         assertTrue(resp.isSuccess());
         assertEquals(
@@ -787,9 +780,9 @@ public class SemuxApiTest extends SemuxApiTestBase {
     public void composeRawTransactionDelegateTest() {
         String network = "TESTNET";
         String type = "DELEGATE";
-        String to = "";
-        String value = "";
-        String fee = String.valueOf(config.minTransactionFee().getNano());
+        String to = null;
+        String value = null;
+        String fee = config.spec().minTransactionFee().toString();
         String nonce = "123";
         String timestamp = "1523028482000";
         String data = Hex.encode0x("semux1".getBytes());
@@ -797,12 +790,14 @@ public class SemuxApiTest extends SemuxApiTestBase {
         ComposeRawTransactionResponse resp = api.composeRawTransaction(
                 network,
                 type,
-                fee,
-                nonce,
                 to,
                 value,
+                fee,
+                nonce,
                 timestamp,
-                data);
+                data,
+                null,
+                null);
 
         assertTrue(resp.isSuccess());
         assertEquals(
@@ -816,7 +811,7 @@ public class SemuxApiTest extends SemuxApiTestBase {
         String type = "VOTE";
         String to = "0xdb7cadb25fdcdd546fb0268524107582c3f8999c";
         String value = "123";
-        String fee = String.valueOf(config.minTransactionFee().getNano());
+        String fee = config.spec().minTransactionFee().toString();
         String nonce = "123";
         String timestamp = "1523028482000";
         String data = Hex.encode0x("semux1".getBytes());
@@ -824,16 +819,80 @@ public class SemuxApiTest extends SemuxApiTestBase {
         ComposeRawTransactionResponse resp = api.composeRawTransaction(
                 network,
                 type,
-                fee,
-                nonce,
                 to,
                 value,
+                fee,
+                nonce,
                 timestamp,
-                data);
+                data,
+                null,
+                null);
 
         assertTrue(resp.isSuccess());
         assertEquals(
                 "0x010314db7cadb25fdcdd546fb0268524107582c3f8999c000000000000007b00000000004c4b40000000000000007b000001629b9257d00673656d757831",
+                resp.getResult());
+    }
+
+    @Test
+    public void composeRawTransactionCreateTest() {
+        String network = "TESTNET";
+        String type = "CREATE";
+        String to = null;
+        String value = "0";
+        String fee = null;
+        String nonce = "123";
+        String timestamp = "1523028482000";
+        String data = Hex.encode0x("semux1".getBytes());
+        long gas = 100000;
+        Amount gasPrice = Amount.of(10);
+
+        ComposeRawTransactionResponse resp = api.composeRawTransaction(
+                network,
+                type,
+                to,
+                value,
+                fee,
+                nonce,
+                timestamp,
+                data,
+                String.valueOf(gas),
+                gasPrice.toString());
+
+        assertTrue(resp.isSuccess());
+        assertEquals(
+                "0x010514000000000000000000000000000000000000000000000000000000000000000000000000000000000000007b000001629b9257d00673656d75783100000000000186a0000000000000000a",
+                resp.getResult());
+    }
+
+    @Test
+    public void composeRawTransactionCallTest() {
+        String network = "TESTNET";
+        String type = "CALL";
+        String to = "0xdb7cadb25fdcdd546fb0268524107582c3f8999c";
+        String value = "100";
+        String fee = null;
+        String nonce = "123";
+        String timestamp = "1523028482000";
+        String data = Hex.encode0x("semux1".getBytes());
+        String gas = "100000";
+        String gasPrice = "1";
+
+        ComposeRawTransactionResponse resp = api.composeRawTransaction(
+                network,
+                type,
+                to,
+                value,
+                fee,
+                nonce,
+                timestamp,
+                data,
+                gas,
+                gasPrice);
+
+        assertTrue(resp.isSuccess());
+        assertEquals(
+                "0x010614db7cadb25fdcdd546fb0268524107582c3f8999c00000000000000640000000000000000000000000000007b000001629b9257d00673656d75783100000000000186a00000000000000001",
                 resp.getResult());
     }
 

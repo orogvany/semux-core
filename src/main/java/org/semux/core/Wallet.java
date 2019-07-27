@@ -23,10 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import com.github.orogvany.bip32.Network;
-import com.github.orogvany.bip32.wallet.Bip44;
-import com.github.orogvany.bip32.wallet.CoinType;
-import com.github.orogvany.bip32.wallet.HdAddress;
 import org.bouncycastle.crypto.generators.BCrypt;
 import org.semux.core.exception.WalletLockedException;
 import org.semux.core.state.Account;
@@ -35,6 +31,13 @@ import org.semux.crypto.Aes;
 import org.semux.crypto.CryptoException;
 import org.semux.crypto.Hash;
 import org.semux.crypto.Key;
+import org.semux.crypto.bip32.CoinType;
+import org.semux.crypto.bip32.HdKeyPair;
+import org.semux.crypto.bip32.key.KeyVersion;
+import org.semux.crypto.bip39.Language;
+import org.semux.crypto.bip39.MnemonicGenerator;
+import org.semux.crypto.bip44.Bip44;
+import org.semux.message.CliMessages;
 import org.semux.util.ByteArray;
 import org.semux.util.Bytes;
 import org.semux.util.FileUtil;
@@ -53,19 +56,28 @@ public class Wallet {
     private static final int SALT_LENGTH = 16;
     private static final int BCRYPT_COST = 12;
     private static final Bip44 BIP_44 = new Bip44();
-    private static final int MAX_HD_WALLET_SCAN_AHEAD = 20;
+    private static final int MAX_HD_WALLET_SCAN_AHEAD = 64;
+
+    // the BIP-44 path prefix for semux addresses
+    public static final String PATH_PREFIX = "m/44'/7562605'/0'/0'";
+    public static final String MNEMONIC_PASS_PHRASE = "";
+    public static final Language MNEMONIC_LANGUAGE = Language.ENGLISH;
+    public static final int MNEMONIC_ENTROPY_LENGTH = 128;
+    // always use mainnet to avoid confusion, since the generated key is stored
+    public static final KeyVersion KEY_VERSION = KeyVersion.MAINNET;
+    public static final CoinType COIN_TYPE = CoinType.SEMUX_SLIP10;
 
     private final File file;
     private final org.semux.Network network;
-
-    // hd wallet key
-    private byte[] hdSeed = new byte[0];
-    private int nextHdAccountIndex = 0;
 
     private final Map<ByteArray, Key> accounts = Collections.synchronizedMap(new LinkedHashMap<>());
     private final Map<ByteArray, String> aliases = new ConcurrentHashMap<>();
 
     private String password;
+
+    // hd wallet key
+    private String mnemonicPhrase = "";
+    private int nextAccountIndex = 0;
 
     /**
      * Creates a new wallet instance.
@@ -148,8 +160,11 @@ public class Wallet {
                     key = BCrypt.generate(Bytes.of(password), salt, BCRYPT_COST);
                     newAccounts = readAccounts(key, dec, true, version);
                     newAliases = readAddressAliases(key, dec);
-                    hdSeed = dec.readBytes();
-                    nextHdAccountIndex = dec.readInt();
+                    try {
+                        readHdSeed(key, dec);
+                    } catch (Exception e) {
+                        logger.warn("Failed to read HD mnemonic phrase");
+                    }
                     break;
                 default:
                     throw new CryptoException("Unknown wallet version.");
@@ -169,7 +184,7 @@ public class Wallet {
             this.password = password;
             return true;
         } catch (CryptoException e) {
-            logger.error(e.getMessage());
+            logger.debug(e.getMessage());
         } catch (InvalidKeySpecException e) {
             logger.error("Failed to decrypt the wallet data");
         } catch (IOException e) {
@@ -177,17 +192,6 @@ public class Wallet {
         }
 
         return false;
-    }
-
-    private Network getWalletNetwork(org.semux.Network network) {
-        switch (network) {
-        case DEVNET:
-        case TESTNET:
-            return Network.testnet;
-        case MAINNET:
-            return Network.mainnet;
-        }
-        throw new IllegalArgumentException("Unknown network.");
     }
 
     /**
@@ -235,7 +239,8 @@ public class Wallet {
 
     /**
      * Reads the address book.
-     * 
+     *
+     * @param key
      * @param dec
      * @return
      */
@@ -258,7 +263,8 @@ public class Wallet {
 
     /**
      * Writes the address book.
-     * 
+     *
+     * @param key
      * @param enc
      */
     protected void writeAddressAliases(byte[] key, SimpleEncoder enc) {
@@ -277,6 +283,42 @@ public class Wallet {
 
         enc.writeBytes(iv);
         enc.writeBytes(aliasesEncrypted);
+    }
+
+    /**
+     * Reads the mnemonic phase and next account index.
+     *
+     * @param key
+     * @param dec
+     * @return
+     */
+    protected void readHdSeed(byte[] key, SimpleDecoder dec) {
+        byte[] iv = dec.readBytes();
+        byte[] hdSeedEncrypted = dec.readBytes();
+        byte[] hdSeedRaw = Aes.decrypt(hdSeedEncrypted, key, iv);
+
+        SimpleDecoder d = new SimpleDecoder(hdSeedRaw);
+        mnemonicPhrase = d.readString();
+        nextAccountIndex = d.readInt();
+    }
+
+    /**
+     * Writes the mnemonic phase and next account index.
+     *
+     * @param key
+     * @param enc
+     */
+    protected void writeHdSeed(byte[] key, SimpleEncoder enc) {
+        SimpleEncoder e = new SimpleEncoder();
+        e.writeString(mnemonicPhrase);
+        e.writeInt(nextAccountIndex);
+
+        byte[] iv = Bytes.random(16);
+        byte[] hdSeedRaw = e.toBytes();
+        byte[] hdSeedEncrypted = Aes.encrypt(hdSeedRaw, key, iv);
+
+        enc.writeBytes(iv);
+        enc.writeBytes(hdSeedEncrypted);
     }
 
     /**
@@ -407,44 +449,26 @@ public class Wallet {
         requireUnlocked();
 
         synchronized (accounts) {
-            ByteArray to = ByteArray.of(newKey.toAddress());
-            if (accounts.containsKey(to)) {
+            ByteArray address = ByteArray.of(newKey.toAddress());
+            if (accounts.containsKey(address)) {
                 return false;
             }
 
-            accounts.put(to, newKey);
+            accounts.put(address, newKey);
             return true;
         }
     }
 
     /**
-     * Adds a new account to the wallet.
+     * Add an account with randomly generated key.
      *
-     * NOTE: you need to call {@link #flush()} to update the wallet on disk.
-     *
-     * @return the new account
+     * @return the generated key
      * @throws WalletLockedException
-     *
      */
-    public Key addAccount() {
-        requireUnlocked();
-        if (!isHdWalletInitialized()) {
-            throw new IllegalArgumentException("Cannot add accounts until HD seed is configured");
-        }
-
-        synchronized (accounts) {
-            HdAddress rootAddress = BIP_44.getRootAddressFromSeed(hdSeed, Network.mainnet, CoinType.semux);
-            HdAddress address = BIP_44.getAddress(rootAddress, nextHdAccountIndex++);
-            Key newKey = Key.fromRawPrivateKey(address.getPrivateKey().getPrivateKey());
-            ByteArray to = ByteArray.of(newKey.toAddress());
-            accounts.put(to, newKey);
-            // set a default alias
-            if (!aliases.containsKey(to)) {
-                setAddressAlias(newKey.toAddress(), address.getPath());
-            }
-
-            return newKey;
-        }
+    public Key addAccountRandom() throws WalletLockedException {
+        Key key = new Key();
+        addAccount(key);
+        return key;
     }
 
     /**
@@ -501,7 +525,6 @@ public class Wallet {
             if (removed && isHdWalletInitialized()) {
                 // remove the alias for the account
                 removeAddressAlias(address);
-                scanForHdKeys(null);
             }
             return removed;
         }
@@ -547,9 +570,7 @@ public class Wallet {
 
             writeAccounts(key, enc);
             writeAddressAliases(key, enc);
-
-            enc.writeBytes(hdSeed);
-            enc.writeInt(nextHdAccountIndex);
+            writeHdSeed(key, enc);
 
             if (!file.getParentFile().exists() && !file.getParentFile().mkdirs()) {
                 logger.error("Failed to create the directory for wallet");
@@ -625,12 +646,6 @@ public class Wallet {
         return new HashMap<>(aliases);
     }
 
-    private void requireUnlocked() throws WalletLockedException {
-        if (!isUnlocked()) {
-            throw new WalletLockedException();
-        }
-    }
-
     /**
      * Adds the addresses and aliases from another wallet
      *
@@ -657,55 +672,123 @@ public class Wallet {
         return numImportedAddresses;
     }
 
+    /**
+     * Returns the targeted network.
+     *
+     * @return
+     */
     public org.semux.Network getNetwork() {
         return network;
     }
 
-    public void setHdSeed(byte[] seed) {
-        this.hdSeed = seed;
-        this.nextHdAccountIndex = 0;
+    private void requireUnlocked() throws WalletLockedException {
+        if (!isUnlocked()) {
+            throw new WalletLockedException();
+        }
+    }
+
+    // ================
+    // HD wallet
+    // ================
+
+    /**
+     * Returns whether the HD seed is initialized.
+     *
+     * @return true if set, otherwise false
+     */
+    public boolean isHdWalletInitialized() {
+        requireUnlocked();
+        return mnemonicPhrase != null && !mnemonicPhrase.isEmpty();
     }
 
     /**
-     * Scan for HD keys used accounts, and add them to the account. todo - this can
-     * probably be moved out of here, not sure where it best fits.
+     * Initialize the HD wallet.
+     * 
+     * @param mnemonicPhrase
+     *            the mnemonic word list
+     */
+    public void initializeHdWallet(String mnemonicPhrase) {
+        this.mnemonicPhrase = mnemonicPhrase;
+        this.nextAccountIndex = 0;
+    }
+
+    /**
+     * Returns the HD seed.
+     * 
+     * @return seed
+     */
+    public byte[] getSeed() {
+        MnemonicGenerator generator = new MnemonicGenerator();
+        return generator.getSeedFromWordlist(mnemonicPhrase, MNEMONIC_PASS_PHRASE, MNEMONIC_LANGUAGE);
+    }
+
+    /**
+     * Derives a key based on the current HD account index, and put it into the
+     * wallet.
+     *
+     * @return the derived key
+     */
+    public Key addAccountWithNextHdKey() {
+        requireUnlocked();
+        requireHdWalletInitialized();
+
+        synchronized (accounts) {
+            byte[] seed = getSeed();
+            HdKeyPair rootKey = BIP_44.getRootKeyPairFromSeed(seed, KEY_VERSION, COIN_TYPE);
+            HdKeyPair childKey = BIP_44.getChildKeyPair(rootKey, nextAccountIndex++);
+
+            Key key = Key.fromRawPrivateKey(childKey.getPrivateKey().getKeyData());
+            ByteArray address = ByteArray.of(key.toAddress());
+
+            // put the accounts into
+            accounts.put(address, key);
+
+            // set a default alias
+            if (!aliases.containsKey(address)) {
+                setAddressAlias(address.getData(), getAliasFromPath(childKey.getPath()));
+            }
+
+            return key;
+        }
+    }
+
+    /**
+     * Scans for used HD keys from the 0-th index.
+     *
+     * Add any found used keys to this wallet.
+     *
+     * Increase the `nextAccountIndex` if a larger index is discovered.
+     *
+     * @return the number of accounts found
      */
     public int scanForHdKeys(AccountState accountState) {
         requireUnlocked();
-        int found = 0;
+        requireHdWalletInitialized();
 
-        // make sure to add at least the default account
-        if (nextHdAccountIndex == 0) {
-            addAccount();
-            found++;
-        }
+        HdKeyPair rootAddress = BIP_44.getRootKeyPairFromSeed(getSeed(), KEY_VERSION, COIN_TYPE);
 
-        HdAddress rootAddress = BIP_44.getRootAddressFromSeed(hdSeed, getWalletNetwork(network), CoinType.semux);
-
-        nextHdAccountIndex = 0;
-
-        int start = nextHdAccountIndex;
+        int start = 0;
         int endIndex = start + MAX_HD_WALLET_SCAN_AHEAD;
-
+        int found = 0;
         for (int i = start; i < endIndex; i++) {
-            HdAddress address = BIP_44.getAddress(rootAddress, i);
+            HdKeyPair childKey = BIP_44.getChildKeyPair(rootAddress, i);
+            Key key = Key.fromRawPrivateKey(childKey.getPrivateKey().getKeyData());
+            ByteArray address = ByteArray.of(key.toAddress());
 
-            Key key = Key.fromRawPrivateKey(address.getPrivateKey().getPrivateKey());
             boolean isUsedAccount = isUsedAccount(accountState, key.toAddress());
 
-            ByteArray to = ByteArray.of(key.toAddress());
             // if we find an account that has been used, we push forward our end search.
             // an account exists if its in our wallet, has balance, or has made transactions
-            if (isUsedAccount || accounts.containsKey(to)) {
+            if (isUsedAccount || accounts.containsKey(address)) {
                 endIndex += MAX_HD_WALLET_SCAN_AHEAD;
                 if (addAccount(key)) {
-                    if (!aliases.containsKey(to)) {
-                        aliases.put(to, address.getPath());
+                    if (!aliases.containsKey(address)) {
+                        setAddressAlias(address.getData(), getAliasFromPath(childKey.getPath()));
                     }
                     found++;
                 }
-                if (i >= nextHdAccountIndex) {
-                    nextHdAccountIndex = i + 1;
+                if (i >= nextAccountIndex) {
+                    nextAccountIndex = i + 1;
                 }
             }
         }
@@ -713,16 +796,33 @@ public class Wallet {
         return found;
     }
 
+    /**
+     * the full BIP-44 derivation path is confusing to new users
+     *
+     * So, we adapt this name to be simpler, and mostly concentrate on the index of
+     * the address.
+     *
+     * This method converts from a derivation path to a simplified form for default
+     * wallet alias
+     *
+     * @param path
+     * @return
+     */
+    private String getAliasFromPath(String path) {
+        return path.replace(PATH_PREFIX, CliMessages.get("HdWalletAliasPrefix"));
+    }
+
     private boolean isUsedAccount(AccountState accountState, byte[] bytes) {
         if (accountState == null) {
             return false;
         }
         Account account = accountState.getAccount(bytes);
-        return account.getNonce() > 0 || account.getAvailable().gt0();
+        return account.getNonce() > 0 || account.getAvailable().isPositive();
     }
 
-    public boolean isHdWalletInitialized() {
-        requireUnlocked();
-        return hdSeed != null && hdSeed.length > 0;
+    private void requireHdWalletInitialized() throws WalletLockedException {
+        if (!isHdWalletInitialized()) {
+            throw new IllegalArgumentException("HD Seed is not initialized");
+        }
     }
 }

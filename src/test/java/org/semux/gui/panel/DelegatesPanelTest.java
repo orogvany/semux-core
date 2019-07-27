@@ -14,7 +14,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.semux.core.Amount.ZERO;
-import static org.semux.core.Amount.Unit.SEM;
+import static org.semux.core.Unit.SEM;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +33,7 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.semux.KernelMock;
+import org.semux.core.Amount;
 import org.semux.core.Blockchain;
 import org.semux.core.BlockchainImpl;
 import org.semux.core.PendingManager;
@@ -56,7 +57,7 @@ public class DelegatesPanelTest extends AssertJSwingJUnitTestCase {
     public KernelRule kernelRule1 = new KernelRule(51610, 51710);
 
     @Rule
-    public WalletModelRule walletRule = new WalletModelRule(SEM.of(10000), SEM.of(1));
+    public WalletModelRule walletRule = new WalletModelRule(Amount.of(10000, SEM), Amount.of(1, SEM));
 
     @Captor
     ArgumentCaptor<Transaction> transactionArgumentCaptor = ArgumentCaptor.forClass(Transaction.class);
@@ -175,7 +176,8 @@ public class DelegatesPanelTest extends AssertJSwingJUnitTestCase {
     public void testInsufficientLocked() {
         testUnvote("10");
         window.optionPane(Timeout.timeout(1000))
-                .requireMessage(GuiMessages.get("InsufficientLockedFunds", SwingUtil.formatAmount(SEM.of(10))))
+                .requireMessage(GuiMessages.get("InsufficientLockedFunds", SwingUtil.formatAmount(Amount.of(10,
+                        SEM))))
                 .requireVisible();
     }
 
@@ -240,8 +242,8 @@ public class DelegatesPanelTest extends AssertJSwingJUnitTestCase {
         Transaction tx = transactionArgumentCaptor.getValue();
         assertEquals(TransactionType.DELEGATE, tx.getType());
         assertArrayEquals(Bytes.EMPTY_ADDRESS, tx.getTo());
-        assertEquals(kernelMock.getConfig().minDelegateBurnAmount(), tx.getValue());
-        assertEquals(kernelMock.getConfig().minTransactionFee(), tx.getFee());
+        assertEquals(kernelMock.getConfig().spec().minDelegateBurnAmount(), tx.getValue());
+        assertEquals(kernelMock.getConfig().spec().minTransactionFee(), tx.getFee());
     }
 
     @Test

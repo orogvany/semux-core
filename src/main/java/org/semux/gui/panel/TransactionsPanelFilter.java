@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -96,11 +97,11 @@ public class TransactionsPanelFilter {
                 continue;
             }
 
-            if (min != null && transaction.getTransaction().getValue().lt(min)) {
+            if (min != null && transaction.getTransaction().getValue().lessThan(min)) {
                 continue;
             }
 
-            if (max != null && transaction.getTransaction().getValue().gt(max)) {
+            if (max != null && transaction.getTransaction().getValue().greaterThan(max)) {
                 continue;
             }
 
@@ -138,7 +139,10 @@ public class TransactionsPanelFilter {
      */
     private Amount getAmount(JTextField txtField) {
         try {
-            return SwingUtil.parseAmount(txtField.getText());
+            String text = txtField.getText();
+            if (text != null && !text.isEmpty()) {
+                return SwingUtil.parseAmount(text);
+            }
         } catch (ParseException e) {
             logger.debug("Unable to parse amount for {}", txtField.getText());
         }
@@ -197,7 +201,7 @@ public class TransactionsPanelFilter {
             T existing = getSelectedValue();
             @SuppressWarnings("unchecked")
             T newValue = (T) (anObject instanceof ComboBoxItem ? ((ComboBoxItem<T>) anObject).getValue() : anObject);
-            if (existing != newValue && (existing == null || !existing.equals(newValue))) {
+            if (!Objects.equals(existing, newValue)) {
                 super.setSelectedItem(anObject);
                 List<TransactionsPanel.StatusTransaction> filteredTransactions = getFilteredTransactions();
                 tableModel.setData(filteredTransactions);

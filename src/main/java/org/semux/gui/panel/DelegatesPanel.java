@@ -6,9 +6,6 @@
  */
 package org.semux.gui.panel;
 
-import static org.semux.core.Amount.sub;
-import static org.semux.core.Amount.sum;
-
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Point;
@@ -45,7 +42,6 @@ import org.semux.core.Amount;
 import org.semux.core.Blockchain;
 import org.semux.core.BlockchainImpl.ValidatorStats;
 import org.semux.core.PendingManager;
-import org.semux.core.Transaction;
 import org.semux.core.TransactionType;
 import org.semux.core.state.Delegate;
 import org.semux.core.state.DelegateState;
@@ -54,6 +50,7 @@ import org.semux.gui.Action;
 import org.semux.gui.PlaceHolder;
 import org.semux.gui.SemuxGui;
 import org.semux.gui.SwingUtil;
+import org.semux.gui.TransactionSender;
 import org.semux.gui.dialog.DelegateDialog;
 import org.semux.gui.model.WalletAccount;
 import org.semux.gui.model.WalletDelegate;
@@ -61,7 +58,6 @@ import org.semux.gui.model.WalletModel;
 import org.semux.message.GuiMessages;
 import org.semux.util.Bytes;
 import org.semux.util.SystemUtil;
-import org.semux.util.TimeUtil;
 import org.semux.util.exception.UnreachableException;
 
 public class DelegatesPanel extends JPanel implements ActionListener {
@@ -142,8 +138,8 @@ public class DelegatesPanel extends JPanel implements ActionListener {
         delegateRegistrationPanel.setBorder(new LineBorder(Color.LIGHT_GRAY));
 
         JLabel label = new JLabel(GuiMessages
-                .get("DelegateRegistrationNoteHtml", SwingUtil.formatAmount(config.minDelegateBurnAmount()),
-                        SwingUtil.formatAmount(config.minTransactionFee())));
+                .get("DelegateRegistrationNoteHtml", SwingUtil.formatAmount(config.spec().minDelegateBurnAmount()),
+                        SwingUtil.formatAmount(config.spec().minTransactionFee())));
         label.setForeground(Color.DARK_GRAY);
 
         selectFrom = new JComboBox<>();
@@ -248,7 +244,8 @@ public class DelegatesPanel extends JPanel implements ActionListener {
                 .createDefaultButton(GuiMessages.get("RegisterAsDelegate"), this, Action.DELEGATE);
         btnDelegate.setName("btnDelegate");
         btnDelegate.setToolTipText(
-                GuiMessages.get("RegisterAsDelegateToolTip", SwingUtil.formatAmount(config.minDelegateBurnAmount())));
+                GuiMessages.get("RegisterAsDelegateToolTip",
+                        SwingUtil.formatAmount(config.spec().minDelegateBurnAmount())));
 
         textName = SwingUtil.textFieldWithCopyPastePopup();
 
@@ -468,24 +465,24 @@ public class DelegatesPanel extends JPanel implements ActionListener {
             JOptionPane.showMessageDialog(this, GuiMessages.get("EnterValidNumberOfVotes"));
             return;
         }
-        Amount fee = config.minTransactionFee();
+        Amount fee = config.spec().minTransactionFee();
 
         if (a == null) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("SelectAccount"));
         } else if (d == null) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("SelectDelegate"));
-        } else if (value.lte0()) {
+        } else if (value.isNotPositive()) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("EnterValidNumberOfVotes"));
         } else {
             if (action == Action.VOTE) {
-                Amount valueWithFee = sum(value, fee);
-                if (valueWithFee.gt(a.getAvailable())) {
+                Amount valueWithFee = value.add(fee);
+                if (valueWithFee.greaterThan(a.getAvailable())) {
                     JOptionPane.showMessageDialog(this,
                             GuiMessages.get("InsufficientFunds", SwingUtil.formatAmount(valueWithFee)));
                     return;
                 }
 
-                if (sub(a.getAvailable(), valueWithFee).lt(fee)) {
+                if (a.getAvailable().subtract(valueWithFee).lessThan(fee)) {
                     int ret = JOptionPane.showConfirmDialog(this, GuiMessages.get("NotEnoughBalanceToUnvote"),
                             GuiMessages.get("ConfirmDelegateRegistration"), JOptionPane.YES_NO_OPTION);
                     if (ret != JOptionPane.YES_OPTION) {
@@ -493,38 +490,30 @@ public class DelegatesPanel extends JPanel implements ActionListener {
                     }
                 }
             } else {
-                if (fee.gt(a.getAvailable())) {
+                if (fee.greaterThan(a.getAvailable())) {
                     JOptionPane.showMessageDialog(this,
                             GuiMessages.get("InsufficientFunds", SwingUtil.formatAmount(fee)));
                     return;
                 }
 
-                if (value.gt(a.getLocked())) {
+                if (value.greaterThan(a.getLocked())) {
                     JOptionPane.showMessageDialog(this,
                             GuiMessages.get("InsufficientLockedFunds", SwingUtil.formatAmount(value)));
                     return;
                 }
 
                 // check that user has voted more than amount to unvote
-                if (value.gt(d.getVotesFromMe())) {
+                if (value.greaterThan(d.getVotesFromMe())) {
                     JOptionPane.showMessageDialog(this, GuiMessages.get("InsufficientVotes"));
                     return;
                 }
             }
 
-            PendingManager pendingMgr = kernel.getPendingManager();
-
-            Network network = kernel.getConfig().network();
             TransactionType type = action.equals(Action.VOTE) ? TransactionType.VOTE : TransactionType.UNVOTE;
-            byte[] fromAddress = a.getKey().toAddress();
-            byte[] toAddress = d.getAddress();
-            long nonce = pendingMgr.getNonce(fromAddress);
-            long timestamp = TimeUtil.currentTimeMillis();
-            byte[] data = {};
-            Transaction tx = new Transaction(network, type, toAddress, value, fee, nonce, timestamp, data);
-            tx.sign(a.getKey());
-
-            sendTransaction(pendingMgr, tx);
+            byte[] to = d.getAddress();
+            byte[] data = Bytes.EMPTY_BYTES;
+            PendingManager.ProcessingResult result = TransactionSender.send(kernel, a, type, to, value, fee, data);
+            handleTransactionResult(result);
         }
     }
 
@@ -538,9 +527,11 @@ public class DelegatesPanel extends JPanel implements ActionListener {
             JOptionPane.showMessageDialog(this, GuiMessages.get("SelectAccount"));
         } else if (!name.matches("[_a-z0-9]{3,16}")) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("AccountNameError"));
-        } else if (a.getAvailable().lt(sum(config.minDelegateBurnAmount(), config.minTransactionFee()))) {
+        } else if (a.getAvailable()
+                .lessThan(config.spec().minDelegateBurnAmount().add(config.spec().minTransactionFee()))) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("InsufficientFunds",
-                    SwingUtil.formatAmount(sum(config.minDelegateBurnAmount(), config.minTransactionFee()))));
+                    SwingUtil.formatAmount(
+                            config.spec().minDelegateBurnAmount().add(config.spec().minTransactionFee()))));
         } else {
             // validate delegate address
             DelegateState delegateState = kernel.getBlockchain().getDelegateState();
@@ -573,36 +564,29 @@ public class DelegatesPanel extends JPanel implements ActionListener {
 
             // confirm burning amount
             if (JOptionPane.showConfirmDialog(this,
-                    GuiMessages.get("DelegateRegistrationInfo", SwingUtil.formatAmount(config.minDelegateBurnAmount())),
+                    GuiMessages.get("DelegateRegistrationInfo",
+                            SwingUtil.formatAmount(config.spec().minDelegateBurnAmount())),
                     GuiMessages.get("ConfirmDelegateRegistration"),
                     JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
                 return;
             }
 
-            PendingManager pendingMgr = kernel.getPendingManager();
-
-            Network network = kernel.getConfig().network();
             TransactionType type = TransactionType.DELEGATE;
             byte[] to = Bytes.EMPTY_ADDRESS;
-            Amount value = config.minDelegateBurnAmount();
-            Amount fee = config.minTransactionFee();
-            long nonce = pendingMgr.getNonce(a.getAddress());
-            long timestamp = TimeUtil.currentTimeMillis();
+            Amount value = config.spec().minDelegateBurnAmount();
+            Amount fee = config.spec().minTransactionFee();
             byte[] data = Bytes.of(name);
-            Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(a.getKey());
-
-            sendTransaction(pendingMgr, tx);
+            PendingManager.ProcessingResult result = TransactionSender.send(kernel, a, type, to, value, fee, data);
+            handleTransactionResult(result);
         }
     }
 
     /**
-     * Adds a transaction to the pending manager.
-     * 
-     * @param pendingMgr
-     * @param tx
+     * Handles pending transaction result.
+     *
+     * @param result
      */
-    protected void sendTransaction(PendingManager pendingMgr, Transaction tx) {
-        PendingManager.ProcessingResult result = pendingMgr.addTransactionSync(tx);
+    protected void handleTransactionResult(PendingManager.ProcessingResult result) {
         if (result.error == null) {
             JOptionPane.showMessageDialog(this, GuiMessages.get("TransactionSent", 30),
                     GuiMessages.get("SuccessDialogTitle"), JOptionPane.INFORMATION_MESSAGE);

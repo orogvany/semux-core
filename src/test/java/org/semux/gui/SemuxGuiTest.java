@@ -13,7 +13,6 @@ import static org.mockito.Mockito.verify;
 import static org.semux.core.Amount.ZERO;
 
 import java.io.IOException;
-import java.util.Collections;
 
 import org.apache.commons.cli.ParseException;
 import org.junit.Rule;
@@ -80,20 +79,6 @@ public class SemuxGuiTest {
 
         // verify
         assertThat(gui.setupCoinbase(wallet)).isEqualTo(3);
-    }
-
-    @Test
-    public void testSetupCoinbaseEmpty() throws ParseException {
-        Wallet wallet = kernelRule.getKernel().getWallet();
-        wallet.setAccounts(Collections.emptyList());
-
-        // setup coinbase
-        SemuxGui gui = spy(new SemuxGui(new WalletModel(kernelRule.getKernel().getConfig()), kernelRule.getKernel()));
-        Mockito.doNothing().when(gui).startKernel(any(), any(), any());
-        gui.setupCoinbase(wallet);
-
-        // verify
-        assertThat(wallet.size()).isEqualTo(1);
     }
 
     @Test

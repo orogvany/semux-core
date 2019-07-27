@@ -6,6 +6,7 @@
  */
 package org.semux.consensus;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -17,9 +18,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static org.semux.core.Fork.UNIFORM_DISTRIBUTION;
-import static org.semux.core.Amount.Unit.SEM;
+import static org.semux.core.Unit.SEM;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
@@ -28,8 +28,6 @@ import java.util.stream.IntStream;
 
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
 import org.semux.TestUtils;
 import org.semux.config.Constants;
 import org.semux.config.MainnetConfig;
@@ -49,7 +47,6 @@ import org.semux.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@RunWith(MockitoJUnitRunner.class)
 public class SemuxBftTest {
 
     private static final Logger logger = LoggerFactory.getLogger(SemuxBftTest.class);
@@ -123,7 +120,8 @@ public class SemuxBftTest {
         long time = TimeUtil.currentTimeMillis();
         Transaction tx1 = createTransaction(to, from1, time, 0);
         kernelRule.getKernel().setBlockchain(new BlockchainImpl(kernelRule.getKernel().getConfig(), temporaryDBRule));
-        kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from1.toAddress(), SEM.of(1000));
+        kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from1.toAddress(), Amount.of(
+                1000, SEM));
         Block block1 = TestUtils.createBlock(
                 kernelRule.getKernel().getBlockchain().getLatestBlock().getHash(),
                 from1,
@@ -136,7 +134,8 @@ public class SemuxBftTest {
         // create a tx with the same hash with tx1 from a different signer in the second
         // block
         Key from2 = new Key();
-        kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from2.toAddress(), SEM.of(1000));
+        kernelRule.getKernel().getBlockchain().getAccountState().adjustAvailable(from2.toAddress(), Amount.of(
+                1000, SEM));
         Transaction tx2 = createTransaction(to, from2, time, 0);
         Block block2 = TestUtils.createBlock(
                 kernelRule.getKernel().getBlockchain().getLatestBlock().getHash(),
@@ -146,12 +145,12 @@ public class SemuxBftTest {
                 Collections.singletonList(new TransactionResult()));
 
         // this test case is valid if and only if tx1 and tx2 have the same tx hash
-        assertTrue(Arrays.equals(tx1.getHash(), tx2.getHash()));
+        assertArrayEquals(tx1.getHash(), tx2.getHash());
 
         // the block should be rejected because of the duplicated tx
         semuxBFT.proposal = new Proposal(new Proof(block2.getNumber(), 0), block2.getHeader(), Collections.emptyList());
         semuxBFT.proposal.sign(from2);
-        assertFalse(semuxBFT.validateBlock(block2.getHeader(), block2.getTransactions()));
+        assertFalse(semuxBFT.validateBlockProposal(block2.getHeader(), block2.getTransactions()));
     }
 
     @Test
@@ -198,7 +197,7 @@ public class SemuxBftTest {
                 Collections.emptyList());
 
         SemuxBft semuxBFT = new SemuxBft(kernelRule.getKernel());
-        assertFalse(semuxBFT.validateBlock(block.getHeader(), Collections.emptyList()));
+        assertFalse(semuxBFT.validateBlockProposal(block.getHeader(), Collections.emptyList()));
     }
 
     @Test
@@ -215,7 +214,7 @@ public class SemuxBftTest {
         SemuxBft semuxBFT = new SemuxBft(kernelRule.getKernel());
         semuxBFT.proposal = new Proposal(new Proof(block.getNumber(), 0), block.getHeader(), Collections.emptyList());
         semuxBFT.proposal.sign(new Key());
-        assertFalse(semuxBFT.validateBlock(block.getHeader(), Collections.emptyList()));
+        assertFalse(semuxBFT.validateBlockProposal(block.getHeader(), Collections.emptyList()));
     }
 
     @Test
@@ -236,7 +235,7 @@ public class SemuxBftTest {
         semuxBFT.proposal = new Proposal(new Proof(block.getNumber(), 0), block.getHeader(),
                 Collections.singletonList(tx));
         semuxBFT.proposal.sign(blockForger);
-        assertFalse(semuxBFT.validateBlock(block.getHeader(), Collections.singletonList(tx)));
+        assertFalse(semuxBFT.validateBlockProposal(block.getHeader(), Collections.singletonList(tx)));
     }
 
     @Test
@@ -266,8 +265,8 @@ public class SemuxBftTest {
                 kernelRule.getKernel().getConfig().network(),
                 TransactionType.TRANSFER,
                 to.toAddress(),
-                SEM.of(10),
-                kernelRule.getKernel().getConfig().minTransactionFee(),
+                Amount.of(10, SEM),
+                kernelRule.getKernel().getConfig().spec().minTransactionFee(),
                 nonce,
                 time,
                 Bytes.EMPTY_BYTES).sign(from);

@@ -1,10 +1,6 @@
 package org.semux.db.berkeley;
 
-import org.apache.commons.lang3.tuple.Pair;
-import org.junit.Test;
-import org.semux.config.Constants;
-import org.semux.util.Bytes;
-import org.semux.util.ClosableIterator;
+import static org.junit.Assert.*;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -12,7 +8,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.*;
+import org.apache.commons.lang3.tuple.Pair;
+import org.junit.Test;
+import org.semux.config.Constants;
+import org.semux.util.Bytes;
+import org.semux.util.ClosableIterator;
 
 public class BerkeleyDatabaseTest {
     private byte[] key = Bytes.of("key");

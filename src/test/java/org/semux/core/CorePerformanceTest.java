@@ -7,7 +7,7 @@
 package org.semux.core;
 
 import static org.junit.Assert.assertTrue;
-import static org.semux.core.Amount.Unit.NANO_SEM;
+import static org.semux.core.Unit.NANO_SEM;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +45,8 @@ public class CorePerformanceTest {
 
         Random r = new Random();
         for (int i = 0; i < nDelegates; i++) {
-            Delegate d = new Delegate(Bytes.random(20), Bytes.random(16), r.nextLong(), NANO_SEM.of(r.nextLong()));
+            Delegate d = new Delegate(Bytes.random(20), Bytes.random(16), r.nextLong(), Amount.of(r.nextLong(),
+                    NANO_SEM));
             list.add(d);
         }
 
@@ -65,8 +66,8 @@ public class CorePerformanceTest {
 
             TransactionType type = TransactionType.TRANSFER;
             byte[] to = Bytes.random(20);
-            Amount value = NANO_SEM.of(5);
-            Amount fee = config.minTransactionFee();
+            Amount value = Amount.of(5);
+            Amount fee = config.spec().minTransactionFee();
             long nonce = 1;
             long timestamp = TimeUtil.currentTimeMillis();
             byte[] data = Bytes.random(16);
@@ -88,7 +89,7 @@ public class CorePerformanceTest {
 
         t1 = System.nanoTime();
         exec.execute(txs, chain.getAccountState().track(), chain.getDelegateState().track(),
-                new SemuxBlock(chain.getLatestBlock().getHeader(), config.vmMaxBlockGasLimit()));
+                new SemuxBlock(chain.getLatestBlock().getHeader(), config.spec().maxBlockGasLimit()), null, 0);
         t2 = System.nanoTime();
         logger.info("Perf_transaction_2: {} μs/tx", (t2 - t1) / 1_000 / repeat);
     }

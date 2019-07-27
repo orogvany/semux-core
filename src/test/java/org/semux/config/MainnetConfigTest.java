@@ -12,7 +12,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 import static org.semux.core.Amount.ZERO;
-import static org.semux.core.Amount.Unit.SEM;
+import static org.semux.core.Unit.SEM;
 
 import java.io.File;
 import java.io.IOException;
@@ -48,18 +48,18 @@ public class MainnetConfigTest {
     @Test
     public void testBlockReward() {
         Amount total = LongStream
-                .rangeClosed(1, 100_000_000)
+                .rangeClosed(1, 20_000_000)
                 .mapToObj(config::getBlockReward)
                 .reduce(ZERO, Amount::sum);
 
-        assertEquals(SEM.of(75_000_000), total);
+        assertEquals(Amount.of(22_000_000, SEM), total);
     }
 
     @Test
     public void testNumberOfValidators() {
         int last = 0;
         for (int i = 0; i < 60 * Constants.BLOCKS_PER_DAY; i++) {
-            int n = config.getNumberOfValidators(i);
+            int n = config.spec().getNumberOfValidators(i);
             if (n != last) {
                 assertTrue(n > last && (n - last == 1 || last == 0));
                 logger.info("block # = {}, validators = {}", i, n);
@@ -84,7 +84,7 @@ public class MainnetConfigTest {
         StringBuilder validatorsCSV = new StringBuilder();
         for (long i = 0; i < blocks; i++) {
             for (int view = 0; view < views; view++) {
-                String primary = config.getPrimaryValidator(validators, i, view, true);
+                String primary = config.spec().getPrimaryValidator(validators, i, view, true);
                 primaryValidators[(int) i][view] = primary;
 
                 if (view > 0 && primaryValidators[(int) i][view].equals(primaryValidators[(int) i][view - 1])) {

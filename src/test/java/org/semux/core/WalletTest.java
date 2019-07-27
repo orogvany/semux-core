@@ -7,6 +7,7 @@
 package org.semux.core;
 
 import static java.nio.file.attribute.PosixFilePermission.OTHERS_READ;
+
 import static org.hamcrest.Matchers.contains;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -29,8 +30,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.semux.Network;
-import org.semux.config.Config;
-import org.semux.config.DevnetConfig;
 import org.semux.core.exception.WalletLockedException;
 import org.semux.crypto.Hash;
 import org.semux.crypto.Hex;

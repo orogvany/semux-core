@@ -6,6 +6,8 @@
  */
 package org.semux.api.v2;
 
+import static org.semux.core.TransactionType.CALL;
+import static org.semux.core.TransactionType.CREATE;
 import static org.semux.core.TransactionType.DELEGATE;
 
 import java.util.Arrays;
@@ -14,25 +16,31 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.ethereum.vm.LogInfo;
+import org.ethereum.vm.util.HashUtil;
 import org.semux.Kernel;
 import org.semux.api.v2.model.AccountType;
 import org.semux.api.v2.model.AccountVoteType;
 import org.semux.api.v2.model.BlockType;
 import org.semux.api.v2.model.DelegateType;
 import org.semux.api.v2.model.InfoType;
+import org.semux.api.v2.model.InternalTransactionType;
+import org.semux.api.v2.model.LogInfoType;
 import org.semux.api.v2.model.PeerType;
-import org.semux.api.v2.model.PendingTransactionType;
 import org.semux.api.v2.model.TransactionLimitsType;
+import org.semux.api.v2.model.TransactionResultType;
 import org.semux.api.v2.model.TransactionType;
 import org.semux.core.Amount;
 import org.semux.core.Block;
 import org.semux.core.Blockchain;
 import org.semux.core.BlockchainImpl;
 import org.semux.core.Transaction;
+import org.semux.core.TransactionResult;
 import org.semux.core.state.Account;
 import org.semux.core.state.Delegate;
 import org.semux.crypto.Hex;
 import org.semux.net.Peer;
+import org.semux.vm.client.SemuxInternalTransaction;
 
 public class TypeFactory {
 
@@ -62,9 +70,7 @@ public class TypeFactory {
                 .resultsRoot(Hex.encode0x(block.getResultsRoot()))
                 .stateRoot(Hex.encode0x(block.getStateRoot()))
                 .data(Hex.encode0x(block.getData()))
-                .transactions(txs.stream()
-                        .map(tx -> transactionType(block.getNumber(), tx))
-                        .collect(Collectors.toList()));
+                .transactions(txs.stream().map(TypeFactory::transactionType).collect(Collectors.toList()));
     }
 
     public static DelegateType delegateType(BlockchainImpl.ValidatorStats validatorStats, Delegate delegate,
@@ -98,9 +104,7 @@ public class TypeFactory {
                         TypeFactory
                                 .delegateType(blockchain.getValidatorStats(delegate.getAddress()), delegate,
                                         isValidator))
-                .votes(
-                        String.valueOf(
-                                blockchain.getDelegateState().getVote(address, delegate.getAddress()).getNano()));
+                .votes(blockchain.getDelegateState().getVote(address, delegate.getAddress()).toString());
     }
 
     public static InfoType infoType(Kernel kernel) {
@@ -130,16 +134,18 @@ public class TypeFactory {
     public static TransactionLimitsType transactionLimitsType(Kernel kernel,
             org.semux.core.TransactionType transactionType) {
         return new TransactionLimitsType()
-                .maxTransactionDataSize(kernel.getConfig().maxTransactionDataSize(transactionType))
-                .minTransactionFee(encodeAmount(kernel.getConfig().minTransactionFee()))
+                .maxTransactionDataSize(kernel.getConfig().spec().maxTransactionDataSize(transactionType))
+                .minTransactionFee(encodeAmount(
+                        transactionType.equals(CREATE) || transactionType.equals(CALL) ? Amount.ZERO
+                                : kernel.getConfig().spec().minTransactionFee()))
                 .minDelegateBurnAmount(encodeAmount(
-                        transactionType.equals(DELEGATE) ? kernel.getConfig().minDelegateBurnAmount() : null));
+                        transactionType.equals(DELEGATE) ? kernel.getConfig().spec().minDelegateBurnAmount() : null));
     }
 
-    public static TransactionType transactionType(Long blockNumber, Transaction tx) {
-        return new TransactionType()
-                .blockNumber(String.valueOf(blockNumber))
-                .hash(Hex.encode0x(tx.getHash()))
+    public static TransactionType transactionType(Transaction tx) {
+        TransactionType txType = new TransactionType();
+
+        txType.hash(Hex.encode0x(tx.getHash()))
                 .type(TransactionType.TypeEnum.fromValue(tx.getType().name()))
                 .from(Hex.encode0x(tx.getFrom()))
                 .to(Hex.encode0x(tx.getTo()))
@@ -147,23 +153,55 @@ public class TypeFactory {
                 .fee(encodeAmount(tx.getFee()))
                 .nonce(String.valueOf(tx.getNonce()))
                 .timestamp(String.valueOf(tx.getTimestamp()))
-                .data(Hex.encode0x(tx.getData()));
+                .data(Hex.encode0x(tx.getData()))
+                .gas(String.valueOf(tx.getGas()))
+                .gasPrice(encodeAmount(tx.getGasPrice()));
+
+        return txType;
     }
 
-    public static PendingTransactionType pendingTransactionType(Transaction tx) {
-        return new PendingTransactionType()
-                .hash(Hex.encode0x(tx.getHash()))
-                .type(PendingTransactionType.TypeEnum.fromValue(tx.getType().name()))
-                .from(Hex.encode0x(tx.getFrom()))
-                .to(Hex.encode0x(tx.getTo()))
-                .value(encodeAmount(tx.getValue()))
+    public static TransactionResultType transactionResultType(Transaction tx, TransactionResult result, long number) {
+        return new TransactionResultType()
+                .blockNumber(Long.toString(number))
+                .code(result.getCode().name())
+                .logs(result.getLogs().stream().map(TypeFactory::logInfoType).collect(Collectors.toList()))
+                .gas(Long.toString(result.getGas()))
+                .gasUsed(String.valueOf(result.getGasUsed()))
+                .gasPrice(encodeAmount(result.getGasPrice()))
                 .fee(encodeAmount(tx.getFee()))
-                .nonce(String.valueOf(tx.getNonce()))
-                .timestamp(String.valueOf(tx.getTimestamp()))
-                .data(Hex.encode0x(tx.getData()));
+                .code(result.getCode().name())
+                .internalTransactions(result.getInternalTransactions().stream()
+                        .map(TypeFactory::internalTransactionType).collect(Collectors.toList()))
+                .returnData(Hex.encode0x(result.getReturnData()))
+                .contractAddress(
+                        tx.getType().equals(CREATE) ? Hex.encode0x(HashUtil.calcNewAddress(tx.getFrom(), tx.getNonce()))
+                                : null);
+    }
+
+    private static LogInfoType logInfoType(LogInfo log) {
+        return new LogInfoType()
+                .address(Hex.encode0x(log.getAddress()))
+                .data(Hex.encode0x(log.getData()))
+                .topics(log.getTopics().stream().map(topic -> Hex.encode0x(topic.getData()))
+                        .collect(Collectors.toList()));
+    }
+
+    private static InternalTransactionType internalTransactionType(SemuxInternalTransaction it) {
+        return new InternalTransactionType()
+                .rejected(it.isRejected())
+                .depth(Integer.toString(it.getDepth()))
+                .index(Integer.toString(it.getIndex()))
+                .type(it.getType().name())
+                .from(Hex.encode0x(it.getFrom()))
+                .to(Hex.encode0x(it.getTo()))
+                .nonce(Long.toString(it.getNonce()))
+                .gas(Long.toString(it.getGas()))
+                .gasPrice(encodeAmount(it.getGasPrice()))
+                .value(encodeAmount(it.getValue()))
+                .data(Hex.encode0x(it.getData()));
     }
 
     public static String encodeAmount(Amount a) {
-        return a == null ? null : String.valueOf(a.getNano());
+        return a == null ? null : a.toString();
     }
 }

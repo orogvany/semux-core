@@ -6,21 +6,9 @@
  */
 package org.semux.config;
 
-import org.semux.Network;
-import org.semux.config.exception.ConfigException;
-import org.semux.core.Amount;
-import org.semux.core.TransactionType;
-import org.semux.crypto.Hash;
-import org.semux.net.CapabilitySet;
-import org.semux.net.NodeManager.Node;
-import org.semux.net.msg.MessageCode;
-import org.semux.util.BigIntegerUtil;
-import org.semux.util.Bytes;
-import org.semux.util.StringUtil;
-import org.semux.util.SystemUtil;
-import org.semux.util.exception.UnreachableException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static org.semux.core.Amount.ZERO;
+import static org.semux.core.Unit.MILLI_SEM;
+import static org.semux.core.Unit.SEM;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -35,15 +23,38 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static org.semux.core.Amount.Unit.MILLI_SEM;
-import static org.semux.core.Amount.Unit.SEM;
-import static org.semux.core.Amount.ZERO;
+import org.ethereum.vm.chainspec.Spec;
+import org.semux.Network;
+import org.semux.config.exception.ConfigException;
+import org.semux.core.Amount;
+import org.semux.core.TransactionType;
+import org.semux.crypto.Hash;
+import org.semux.net.Capability;
+import org.semux.net.CapabilityTreeSet;
+import org.semux.net.NodeManager.Node;
+import org.semux.net.msg.MessageCode;
+import org.semux.util.BigIntegerUtil;
+import org.semux.util.Bytes;
+import org.semux.util.StringUtil;
+import org.semux.util.SystemUtil;
+import org.semux.util.exception.UnreachableException;
+import org.semux.vm.client.SemuxSpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public abstract class AbstractConfig implements Config {
+public abstract class AbstractConfig implements Config, ChainSpec {
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractConfig.class);
 
     private static final String CONFIG_FILE = "semux.properties";
+
+    // =========================
+    // Chain spec
+    // =========================
+    protected long maxBlockGasLimit = 20_000_000L; // 20m gas
+    protected Amount minTransactionFee = Amount.of(5, MILLI_SEM);
+    protected Amount minDelegateBurnAmount = Amount.of(1000, SEM);
+    protected long nonVMTransactionGasCost = 5_000L;
 
     // =========================
     // General
@@ -51,11 +62,6 @@ public abstract class AbstractConfig implements Config {
     protected File dataDir;
     protected Network network;
     protected short networkVersion;
-
-    protected int maxBlockTransactionsSize = 1024 * 1024;
-    protected Amount minTransactionFee = MILLI_SEM.of(5);
-    protected long maxTransactionTimeDrift = TimeUnit.HOURS.toMillis(2);
-    protected Amount minDelegateBurnAmount = SEM.of(1000);
 
     // =========================
     // P2P
@@ -73,8 +79,8 @@ public abstract class AbstractConfig implements Config {
     protected int netMaxInboundConnectionsPerIp = 5;
     protected int netMaxMessageQueueSize = 4096;
     protected int netMaxFrameBodySize = 128 * 1024;
-    protected int netMaxPacketSize = 8 * 1024 * 1024;
-    protected int netRelayRedundancy = 16;
+    protected int netMaxPacketSize = 16 * 1024 * 1024;
+    protected int netRelayRedundancy = 8;
     protected int netHandshakeExpiry = 5 * 60 * 1000;
     protected int netChannelIdleTimeout = 2 * 60 * 1000;
     protected Set<MessageCode> netPrioritizedMessages = new HashSet<>(Arrays.asList(
@@ -89,10 +95,12 @@ public abstract class AbstractConfig implements Config {
     // =========================
     // Sync
     // =========================
-    protected long downloadTimeout = 2000L;
-    protected int maxQueuedJobs = 8192;
-    protected int maxPendingJobs = 256;
-    protected int maxPendingBlocks = 512;
+    protected long syncDownloadTimeout = 2000L;
+    protected int syncMaxQueuedJobs = 8192;
+    protected int syncMaxPendingJobs = 256;
+    protected int syncMaxPendingBlocks = 512;
+    protected boolean syncDisconnectOnInvalidBlock = false;
+    protected boolean syncFastSync = false;
 
     // =========================
     // API
@@ -112,37 +120,33 @@ public abstract class AbstractConfig implements Config {
     protected long bftPreCommitTimeout = 6000L;
     protected long bftCommitTimeout = 3000L;
     protected long bftFinalizeTimeout = 3000L;
-    protected long maxBlockTimeDrift = TimeUnit.SECONDS.toMillis(30);
+    protected long bftMaxBlockTimeDrift = TimeUnit.SECONDS.toMillis(30);
 
     // =========================
-    // Virtual machine
+    // Transaction pool
     // =========================
-    protected int vmMaxStackSize = 1024;
-    protected int vmInitHeapSize = 128;
-    protected int vmBlockGasLimit = 999_999;
-    protected int vmMaxBlockGasLimit = 9_999_999;
-    protected int vmMinGasPrice = 1;
+    protected int poolBlockGasLimit = 10_000_000;
+    protected Amount poolMinGasPrice = Amount.of(10); // 10 NanoSEM = 10 Gwei
+    protected long poolMaxTransactionTimeDrift = TimeUnit.HOURS.toMillis(2);
 
     // =========================
     // UI
     // =========================
-    protected Locale locale = Locale.getDefault();
+    protected Locale uiLocale = Locale.getDefault();
     protected String uiUnit = "SEM";
     protected int uiFractionDigits = 9;
 
     // =========================
     // Forks
     // =========================
-    protected boolean forkUniformDistributionEnabled = true;
-    protected boolean forkVirtualMachineEnabled = true;
+    protected boolean forkUniformDistributionEnabled = false;
+    protected boolean forkVirtualMachineEnabled = false;
 
-    /**
-     * Create an {@link AbstractConfig} instance.
-     *
-     * @param dataDir
-     * @param network
-     * @param networkVersion
-     */
+    @Override
+    public ChainSpec spec() {
+        return this;
+    }
+
     protected AbstractConfig(String dataDir, Network network, short networkVersion) {
         this.dataDir = new File(dataDir);
         this.network = network;
@@ -153,18 +157,60 @@ public abstract class AbstractConfig implements Config {
     }
 
     @Override
-    public File getFile() {
-        return new File(configDir(), CONFIG_FILE);
+    public long maxBlockGasLimit() {
+        if (this.network() == Network.MAINNET) {
+            return maxBlockGasLimit;
+        } else {
+            return maxBlockGasLimit * 5;
+        }
+    }
+
+    @Override
+    public int maxTransactionDataSize(TransactionType type) {
+        switch (type) {
+        case COINBASE:
+        case UNVOTE:
+        case VOTE:
+            return 0; // not required
+
+        case TRANSFER:
+            return 128; // for memo
+
+        case DELEGATE:
+            return 16; // for name
+
+        case CREATE:
+        case CALL:
+            return 512 * 1024; // for dapps
+
+        default:
+            throw new UnreachableException();
+        }
+    }
+
+    @Override
+    public Amount minTransactionFee() {
+        return minTransactionFee;
+    }
+
+    @Override
+    public Amount minDelegateBurnAmount() {
+        return minDelegateBurnAmount;
+    }
+
+    @Override
+    public long nonVMTransactionGasCost() {
+        return nonVMTransactionGasCost;
     }
 
     @Override
     public Amount getBlockReward(long number) {
-        if (number <= 10_000_000L) {
-            return SEM.of(3);
-        } else if (number <= 25_000_000L) {
-            return SEM.of(2);
-        } else if (number <= 40_000_000L) {
-            return SEM.of(1);
+        if (number <= 2_000_000L) { // ~2 years
+            return Amount.of(3, SEM);
+        } else if (number <= 6_000_000L) { // ~4 years
+            return Amount.of(2, SEM);
+        } else if (number <= 14_000_000L) { // ~8 years
+            return Amount.of(1, SEM);
         } else {
             return ZERO;
         }
@@ -223,18 +269,13 @@ public abstract class AbstractConfig implements Config {
     }
 
     @Override
-    public String getClientId() {
-        return String.format("%s/v%s-%s/%s/%s",
-                Constants.CLIENT_NAME,
-                Constants.CLIENT_VERSION,
-                SystemUtil.getImplementationVersion(),
-                SystemUtil.getOsName().toString(),
-                SystemUtil.getOsArch());
+    public Spec vmSpec() {
+        return new SemuxSpec();
     }
 
     @Override
-    public CapabilitySet getClientCapabilities() {
-        return Constants.CLIENT_CAPABILITIES;
+    public File getFile() {
+        return new File(configDir(), CONFIG_FILE);
     }
 
     @Override
@@ -268,48 +309,18 @@ public abstract class AbstractConfig implements Config {
     }
 
     @Override
-    public int maxBlockTransactionsSize() {
-        return maxBlockTransactionsSize;
+    public String getClientId() {
+        return String.format("%s/v%s-%s/%s/%s",
+                Constants.CLIENT_NAME,
+                Constants.CLIENT_VERSION,
+                SystemUtil.getImplementationVersion(),
+                SystemUtil.getOsName().toString(),
+                SystemUtil.getOsArch());
     }
 
     @Override
-    public int maxTransactionDataSize(TransactionType type) {
-        switch (type) {
-        case COINBASE:
-            return 0; // not required
-
-        case TRANSFER:
-            return 128; // for memo
-
-        case DELEGATE:
-            return 16; // for name
-
-        case UNVOTE:
-        case VOTE:
-            return 0; // not required
-
-        case CREATE:
-        case CALL:
-            return 64 * 1024; // for dapps
-
-        default:
-            throw new UnreachableException();
-        }
-    }
-
-    @Override
-    public Amount minTransactionFee() {
-        return minTransactionFee;
-    }
-
-    @Override
-    public long maxTransactionTimeDrift() {
-        return maxTransactionTimeDrift;
-    }
-
-    @Override
-    public Amount minDelegateBurnAmount() {
-        return minDelegateBurnAmount;
+    public CapabilityTreeSet getClientCapabilities() {
+        return CapabilityTreeSet.of(Capability.SEMUX, Capability.FAST_SYNC);
     }
 
     @Override
@@ -394,22 +405,32 @@ public abstract class AbstractConfig implements Config {
 
     @Override
     public long syncDownloadTimeout() {
-        return downloadTimeout;
+        return syncDownloadTimeout;
     }
 
     @Override
     public int syncMaxQueuedJobs() {
-        return maxQueuedJobs;
+        return syncMaxQueuedJobs;
     }
 
     @Override
     public int syncMaxPendingJobs() {
-        return maxPendingJobs;
+        return syncMaxPendingJobs;
     }
 
     @Override
     public int syncMaxPendingBlocks() {
-        return maxPendingBlocks;
+        return syncMaxPendingBlocks;
+    }
+
+    @Override
+    public boolean syncDisconnectOnInvalidBlock() {
+        return syncDisconnectOnInvalidBlock;
+    }
+
+    @Override
+    public boolean syncFastSync() {
+        return syncFastSync;
     }
 
     @Override
@@ -468,38 +489,32 @@ public abstract class AbstractConfig implements Config {
     }
 
     @Override
-    public long maxBlockTimeDrift() {
-        return maxBlockTimeDrift;
+    public long bftMaxBlockTimeDrift() {
+        return bftMaxBlockTimeDrift;
     }
 
     @Override
-    public int vmMaxStackSize() {
-        return vmMaxStackSize;
+    public int poolBlockGasLimit() {
+        if (this.network() == Network.MAINNET) {
+            return poolBlockGasLimit;
+        } else {
+            return poolBlockGasLimit * 5;
+        }
     }
 
     @Override
-    public int vmInitialHeapSize() {
-        return vmInitHeapSize;
+    public Amount poolMinGasPrice() {
+        return poolMinGasPrice;
     }
 
     @Override
-    public int vmBlockGasLimit() {
-        return vmBlockGasLimit;
+    public long poolMaxTransactionTimeDrift() {
+        return poolMaxTransactionTimeDrift;
     }
 
     @Override
-    public int vmMaxBlockGasLimit() {
-        return vmMaxBlockGasLimit;
-    }
-
-    @Override
-    public int vmMinGasPrice() {
-        return vmMinGasPrice;
-    }
-
-    @Override
-    public Locale locale() {
-        return locale;
+    public Locale uiLocale() {
+        return uiLocale;
     }
 
     @Override
@@ -587,16 +602,22 @@ public abstract class AbstractConfig implements Config {
                     break;
 
                 case "sync.downloadTimeout":
-                    downloadTimeout = Long.parseLong(props.getProperty(name).trim());
+                    syncDownloadTimeout = Long.parseLong(props.getProperty(name).trim());
                     break;
                 case "sync.maxQueuedJobs":
-                    maxQueuedJobs = Integer.parseInt(props.getProperty(name).trim());
+                    syncMaxQueuedJobs = Integer.parseInt(props.getProperty(name).trim());
                     break;
                 case "sync.maxPendingJobs":
-                    maxPendingJobs = Integer.parseInt(props.getProperty(name).trim());
+                    syncMaxPendingJobs = Integer.parseInt(props.getProperty(name).trim());
                     break;
                 case "sync.maxPendingBlocks":
-                    maxPendingBlocks = Integer.parseInt(props.getProperty(name).trim());
+                    syncMaxPendingBlocks = Integer.parseInt(props.getProperty(name).trim());
+                    break;
+                case "sync.disconnectOnInvalidBlock":
+                    syncDisconnectOnInvalidBlock = Boolean.parseBoolean(props.getProperty(name).trim());
+                    break;
+                case "sync.fastSync":
+                    syncFastSync = Boolean.parseBoolean(props.getProperty(name).trim());
                     break;
 
                 case "api.enabled":
@@ -618,7 +639,7 @@ public abstract class AbstractConfig implements Config {
                     // ui.locale must be in format of en_US ([language]_[country])
                     String[] localeComponents = props.getProperty(name).trim().split("_");
                     if (localeComponents.length == 2) {
-                        locale = new Locale(localeComponents[0], localeComponents[1]);
+                        uiLocale = new Locale(localeComponents[0], localeComponents[1]);
                     }
                     break;
                 }
@@ -630,12 +651,16 @@ public abstract class AbstractConfig implements Config {
                     uiFractionDigits = Integer.parseInt(props.getProperty(name).trim());
                     break;
                 }
-                case "vm.blockGasLimit": {
-                    vmBlockGasLimit = Integer.parseInt(props.getProperty(name).trim());
+                case "txpool.blockGasLimit": {
+                    poolBlockGasLimit = Integer.parseInt(props.getProperty(name).trim());
                     break;
                 }
-                case "vm.minGasPrice": {
-                    vmMinGasPrice = Integer.parseInt(props.getProperty(name).trim());
+                case "txpool.minGasPrice": {
+                    poolMinGasPrice = Amount.of(props.getProperty(name).trim());
+                    break;
+                }
+                case "txpool.maxTransactionTimeDrift": {
+                    poolMaxTransactionTimeDrift = Integer.parseInt(props.getProperty(name).trim());
                     break;
                 }
                 default:

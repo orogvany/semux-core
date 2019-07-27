@@ -6,12 +6,12 @@
  */
 package org.semux.vm.client;
 
+import java.math.BigInteger;
+
 import org.ethereum.vm.DataWord;
 import org.ethereum.vm.client.Repository;
-import org.semux.core.Amount;
 import org.semux.core.state.AccountState;
-
-import java.math.BigInteger;
+import org.semux.core.state.DelegateState;
 
 /**
  * Facade class for AccountState -> Repository
@@ -21,9 +21,19 @@ import java.math.BigInteger;
  */
 public class SemuxRepository implements Cloneable, Repository {
     private final AccountState accountState;
+    private final DelegateState delegateState;
 
-    public SemuxRepository(AccountState accountState) {
+    public SemuxRepository(AccountState accountState, DelegateState delegateState) {
         this.accountState = accountState;
+        this.delegateState = delegateState;
+    }
+
+    public AccountState getAccountState() {
+        return accountState;
+    }
+
+    public DelegateState getDelegateState() {
+        return delegateState;
     }
 
     @Override
@@ -86,32 +96,34 @@ public class SemuxRepository implements Cloneable, Repository {
 
     @Override
     public BigInteger getBalance(byte[] address) {
-        return accountState.getAccount(address).getAvailable().getBigInteger();
+        return Conversion.amountToWei(accountState.getAccount(address).getAvailable());
     }
 
     @Override
     public BigInteger addBalance(byte[] address, BigInteger value) {
-        accountState.adjustAvailable(address, Amount.Unit.NANO_SEM.of(value.longValue()));
+        accountState.adjustAvailable(address, Conversion.weiToAmount(value));
         return value;
     }
 
     @Override
     public Repository startTracking() {
-        return new SemuxRepository(accountState.track());
+        return new SemuxRepository(accountState.track(), delegateState.track());
     }
 
     @Override
     public Repository clone() {
-        return new SemuxRepository(accountState.clone());
+        return new SemuxRepository(accountState.clone(), delegateState.clone());
     }
 
     @Override
     public void commit() {
         accountState.commit();
+        delegateState.commit();
     }
 
     @Override
     public void rollback() {
         accountState.rollback();
+        delegateState.commit();
     }
 }

@@ -4,7 +4,6 @@
  * Distributed under the MIT software license, see the accompanying file
  * LICENSE or https://opensource.org/licenses/mit-license.php
  */
-
 package org.semux.api.v2;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -25,7 +24,6 @@ import javax.ws.rs.core.Response;
 
 import org.apache.commons.validator.routines.DomainValidator;
 import org.apache.commons.validator.routines.InetAddressValidator;
-import org.ethereum.vm.chainspec.Spec;
 import org.ethereum.vm.client.BlockStore;
 import org.ethereum.vm.client.Repository;
 import org.ethereum.vm.client.TransactionReceipt;
@@ -35,10 +33,12 @@ import org.semux.Kernel;
 import org.semux.api.util.TransactionBuilder;
 import org.semux.api.v2.model.AddNodeResponse;
 import org.semux.api.v2.model.ApiHandlerResponse;
+import org.semux.api.v2.model.CallResponse;
 import org.semux.api.v2.model.ComposeRawTransactionResponse;
 import org.semux.api.v2.model.CreateAccountResponse;
 import org.semux.api.v2.model.DeleteAccountResponse;
 import org.semux.api.v2.model.DoTransactionResponse;
+import org.semux.api.v2.model.EstimateGasResponse;
 import org.semux.api.v2.model.GetAccountPendingTransactionsResponse;
 import org.semux.api.v2.model.GetAccountResponse;
 import org.semux.api.v2.model.GetAccountTransactionsResponse;
@@ -54,6 +54,7 @@ import org.semux.api.v2.model.GetPendingTransactionsResponse;
 import org.semux.api.v2.model.GetSyncingProgressResponse;
 import org.semux.api.v2.model.GetTransactionLimitsResponse;
 import org.semux.api.v2.model.GetTransactionResponse;
+import org.semux.api.v2.model.GetTransactionResultResponse;
 import org.semux.api.v2.model.GetValidatorsResponse;
 import org.semux.api.v2.model.GetVoteResponse;
 import org.semux.api.v2.model.GetVotesResponse;
@@ -68,6 +69,7 @@ import org.semux.core.BlockchainImpl;
 import org.semux.core.PendingManager;
 import org.semux.core.SyncManager;
 import org.semux.core.Transaction;
+import org.semux.core.TransactionResult;
 import org.semux.core.TransactionType;
 import org.semux.core.exception.WalletLockedException;
 import org.semux.core.state.Account;
@@ -79,14 +81,18 @@ import org.semux.crypto.Key;
 import org.semux.crypto.cache.PublicKeyCache;
 import org.semux.net.NodeManager;
 import org.semux.net.filter.SemuxIpFilter;
-
-import net.i2p.crypto.eddsa.EdDSAPublicKey;
 import org.semux.vm.client.SemuxBlock;
 import org.semux.vm.client.SemuxBlockStore;
 import org.semux.vm.client.SemuxRepository;
 import org.semux.vm.client.SemuxTransaction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import net.i2p.crypto.eddsa.EdDSAPublicKey;
 
 public final class SemuxApiImpl implements SemuxApi {
+
+    private static final Logger logger = LoggerFactory.getLogger(SemuxApiImpl.class);
 
     private static final Charset CHARSET = UTF_8;
 
@@ -98,81 +104,76 @@ public final class SemuxApiImpl implements SemuxApi {
 
     @Override
     public Response addNode(String node) {
-        AddNodeResponse resp = new AddNodeResponse();
         try {
             kernel.getNodeManager().addNode(validateAddNodeParameter(node));
+
+            AddNodeResponse resp = new AddNodeResponse();
             return success(resp);
         } catch (IllegalArgumentException e) {
-            return badRequest(resp, e.getMessage());
+            return badRequest(e.getMessage());
         }
     }
 
     @Override
     public Response addToBlacklist(String ip) {
-        ApiHandlerResponse resp = new ApiHandlerResponse();
         try {
-            if (!isSet(ip)) {
-                return badRequest(resp, "Parameter `ip` is required");
-            }
+            String blacklistIp = parseIp(ip, true);
 
             SemuxIpFilter ipFilter = kernel.getChannelManager().getIpFilter();
-            ipFilter.blacklistIp(ip.trim());
+            ipFilter.blacklistIp(blacklistIp);
             ipFilter.persist(new File(kernel.getConfig().configDir(), SemuxIpFilter.CONFIG_FILE).toPath());
             kernel.getChannelManager().closeBlacklistedChannels();
 
+            ApiHandlerResponse resp = new ApiHandlerResponse();
             return Response.ok().entity(resp.success(true)).build();
         } catch (UnknownHostException | IllegalArgumentException ex) {
-            return badRequest(resp, ex.getMessage());
+            return badRequest(ex.getMessage());
         }
     }
 
     @Override
     public Response addToWhitelist(String ip) {
-        ApiHandlerResponse resp = new ApiHandlerResponse();
         try {
-            if (!isSet(ip)) {
-                return badRequest(resp, "Parameter `ip` is required");
-            }
+            String whitelistIp = parseIp(ip, true);
 
             SemuxIpFilter ipFilter = kernel.getChannelManager().getIpFilter();
-            ipFilter.whitelistIp(ip.trim());
+            ipFilter.whitelistIp(whitelistIp);
             ipFilter.persist(new File(kernel.getConfig().configDir(), SemuxIpFilter.CONFIG_FILE).toPath());
 
+            ApiHandlerResponse resp = new ApiHandlerResponse();
             return Response.ok().entity(resp.success(true)).build();
         } catch (UnknownHostException | IllegalArgumentException ex) {
-            return badRequest(resp, ex.getMessage());
+            return badRequest(ex.getMessage());
         }
     }
 
     @Override
-    public Response composeRawTransaction(String network, String type, String fee, String nonce, String to,
-            String value,
-            String timestamp, String data) {
-        ComposeRawTransactionResponse resp = new ComposeRawTransactionResponse();
-
+    public Response composeRawTransaction(String network, String type, String to, String value, String fee,
+            String nonce, String timestamp, String data, String gas, String gasPrice) {
         try {
             TransactionBuilder transactionBuilder = new TransactionBuilder(kernel)
                     .withNetwork(network)
                     .withType(type)
                     .withTo(to)
                     .withValue(value)
-                    .withFee(fee, true)
+                    .withFee(fee)
                     .withNonce(nonce)
                     .withTimestamp(timestamp)
-                    .withData(data);
-
+                    .withData(data)
+                    .withGas(gas)
+                    .withGasPrice(gasPrice);
             Transaction transaction = transactionBuilder.buildUnsigned();
-            resp.setResult(Hex.encode0x(transaction.getEncoded()));
 
+            ComposeRawTransactionResponse resp = new ComposeRawTransactionResponse();
+            resp.setResult(Hex.encode0x(transaction.getEncoded()));
             return success(resp);
         } catch (IllegalArgumentException e) {
-            return badRequest(resp, e.getMessage());
+            return badRequest(e.getMessage());
         }
     }
 
     @Override
     public Response createAccount(String name, String privateKey) {
-        CreateAccountResponse resp = new CreateAccountResponse();
         try {
             Key key;
             if (privateKey != null) { // import
@@ -183,272 +184,192 @@ public final class SemuxApiImpl implements SemuxApi {
             }
 
             if (!kernel.getWallet().addAccount(key)) {
-                return badRequest(resp, "The key already exists in this wallet.");
+                return badRequest("The key already exists in this wallet.");
             }
 
             // set alias of the address
-            if (isSet(name)) {
+            if (name != null) {
                 kernel.getWallet().setAddressAlias(key.toAddress(), name);
             }
 
             // save the account
             kernel.getWallet().flush();
-            resp.setResult(Hex.PREF + key.toAddressString());
 
+            CreateAccountResponse resp = new CreateAccountResponse();
+            resp.setResult(Hex.PREF + key.toAddressString());
             return success(resp);
         } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `privateKey` is not a valid hexadecimal string");
+            return badRequest("Parameter `privateKey` is not a valid hexadecimal string");
         } catch (InvalidKeySpecException e) {
-            return badRequest(resp,
+            return badRequest(
                     "Parameter `privateKey` is not a valid ED25519 private key encoded in PKCS#8 format");
         } catch (WalletLockedException e) {
-            return badRequest(resp, e.getMessage());
+            return badRequest(e.getMessage());
         }
     }
 
     @Override
     public Response getAccount(String address) {
-        GetAccountResponse resp = new GetAccountResponse();
-
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-
-        byte[] addressBytes;
         try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
+            byte[] addressBytes = parseAddress(address, true);
+
+            Account account = kernel.getBlockchain().getAccountState().getAccount(addressBytes);
+            int transactionCount = kernel.getBlockchain().getTransactionCount(account.getAddress());
+            int pendingTransactionCount = (int) kernel.getPendingManager()
+                    .getPendingTransactions().parallelStream()
+                    .map(pendingTransaction -> pendingTransaction.transaction)
+                    .filter(tx -> Arrays.equals(tx.getFrom(), addressBytes) || Arrays.equals(tx.getTo(), addressBytes))
+                    .count();
+
+            GetAccountResponse resp = new GetAccountResponse();
+            resp.setResult(TypeFactory.accountType(account, transactionCount, pendingTransactionCount));
+            return success(resp);
+        } catch (IllegalArgumentException ex) {
+            return badRequest(ex.getMessage());
         }
-
-        Account account = kernel.getBlockchain().getAccountState().getAccount(addressBytes);
-        int transactionCount = kernel.getBlockchain().getTransactionCount(account.getAddress());
-        int pendingTransactionCount = (int) kernel.getPendingManager()
-                .getPendingTransactions().parallelStream()
-                .map(pendingTransaction -> pendingTransaction.transaction)
-                .filter(tx -> Arrays.equals(tx.getFrom(), addressBytes) || Arrays.equals(tx.getTo(), addressBytes))
-                .count();
-        resp.setResult(TypeFactory.accountType(account, transactionCount, pendingTransactionCount));
-
-        return success(resp);
     }
 
     @Override
     public Response deleteAccount(String address) {
-        DeleteAccountResponse resp = new DeleteAccountResponse();
-
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-
         try {
-            byte[] addressBytes = Hex.decode0x(address);
+            byte[] addressBytes = parseAddress(address, true);
 
             if (!kernel.getWallet().removeAccount(addressBytes)) {
-                return badRequest(resp, "The provided address doesn't exist in this wallet.");
+                return badRequest("The provided address doesn't exist in this wallet.");
             }
 
             if (!kernel.getWallet().flush()) {
-                return badRequest(resp, "Failed to write the wallet.");
+                return badRequest("Failed to write the wallet.");
             }
 
+            DeleteAccountResponse resp = new DeleteAccountResponse();
             return success(resp);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
+        } catch (IllegalArgumentException ex) {
+            return badRequest(ex.getMessage());
         } catch (WalletLockedException e) {
-            return badRequest(resp, e.getMessage());
+            return badRequest("Wallet is locked");
         }
     }
 
     @Override
     public Response getAccountTransactions(String address, String from, String to) {
-        GetAccountTransactionsResponse resp = new GetAccountTransactionsResponse();
-        byte[] addressBytes;
-        int fromInt;
-        int toInt;
-
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-        if (!isSet(from)) {
-            return badRequest(resp, "Parameter `from` is required");
-        }
-        if (!isSet(to)) {
-            return badRequest(resp, "Parameter `to` is required");
-        }
 
         try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
+            byte[] addressBytes = parseAddress(address, true);
+            int fromInt = parseInt(from, true, "from");
+            int toInt = parseInt(to, true, "to");
+
+            if (toInt <= fromInt) {
+                return badRequest("Parameter `to` must be greater than `from`");
+            }
+
+            GetAccountTransactionsResponse resp = new GetAccountTransactionsResponse();
+            resp.setResult(kernel.getBlockchain().getTransactions(addressBytes, fromInt, toInt).parallelStream()
+                    .map(TypeFactory::transactionType)
+                    .collect(Collectors.toList()));
+            return success(resp);
+        } catch (IllegalArgumentException ex) {
+            return badRequest(ex.getMessage());
         }
-
-        try {
-            fromInt = Integer.parseInt(from);
-        } catch (NumberFormatException ex) {
-            return badRequest(resp, "Parameter `from` is not a valid integer");
-        }
-
-        try {
-            toInt = Integer.parseInt(to);
-        } catch (NumberFormatException ex) {
-            return badRequest(resp, "Parameter `to` is not a valid integer");
-        }
-
-        resp.setResult(kernel.getBlockchain().getTransactions(addressBytes, fromInt, toInt).parallelStream()
-                .map(tx -> TypeFactory.transactionType(
-                        kernel.getBlockchain().getTransactionBlockNumber(tx.getHash()), tx))
-                .collect(Collectors.toList()));
-
-        return success(resp);
     }
 
     @Override
     public Response getAccountPendingTransactions(String address, String from, String to) {
-        GetAccountPendingTransactionsResponse resp = new GetAccountPendingTransactionsResponse();
-        byte[] addressBytes;
-        int fromInt;
-        int toInt;
-
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-        if (!isSet(from)) {
-            return badRequest(resp, "Parameter `from` is required");
-        }
-        if (!isSet(to)) {
-            return badRequest(resp, "Parameter `to` is required");
-        }
-
         try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
+            byte[] addressBytes = parseAddress(address, true);
+            int fromInt = parseInt(from, true, "from");
+            int toInt = parseInt(to, true, "to");
+
+            if (toInt <= fromInt) {
+                return badRequest("Parameter `to` must be greater than `from`");
+            }
+
+            GetAccountPendingTransactionsResponse resp = new GetAccountPendingTransactionsResponse();
+            resp.setResult(kernel.getPendingManager()
+                    .getPendingTransactions().parallelStream()
+                    .map(pendingTransaction -> pendingTransaction.transaction)
+                    .filter(tx -> Arrays.equals(tx.getFrom(), addressBytes) || Arrays.equals(tx.getTo(), addressBytes))
+                    .skip(fromInt)
+                    .limit(toInt - fromInt)
+                    .map(TypeFactory::transactionType)
+                    .collect(Collectors.toList()));
+            return success(resp);
+        } catch (IllegalArgumentException ex) {
+            return badRequest(ex.getMessage());
         }
-
-        try {
-            fromInt = Integer.parseInt(from);
-        } catch (NumberFormatException ex) {
-            return badRequest(resp, "Parameter `from` is not a valid integer");
-        }
-
-        try {
-            toInt = Integer.parseInt(to);
-        } catch (NumberFormatException ex) {
-            return badRequest(resp, "Parameter `to` is not a valid integer");
-        }
-
-        if (toInt <= fromInt) {
-            return badRequest(resp, "Parameter `to` must be greater than `from`");
-        }
-
-        resp.setResult(kernel.getPendingManager()
-                .getPendingTransactions().parallelStream()
-                .map(pendingTransaction -> pendingTransaction.transaction)
-                .filter(tx -> Arrays.equals(tx.getFrom(), addressBytes) || Arrays.equals(tx.getTo(), addressBytes))
-                .skip(fromInt)
-                .limit(toInt - fromInt)
-                .map(TypeFactory::pendingTransactionType)
-                .collect(Collectors.toList()));
-
-        return success(resp);
     }
 
     @Override
     public Response getAccountVotes(String address) {
-        GetAccountVotesResponse resp = new GetAccountVotesResponse();
-        byte[] addressBytes;
-
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-
         try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
+            byte[] addressBytes = parseAddress(address, true);
+
+            GetAccountVotesResponse resp = new GetAccountVotesResponse();
+            resp.setResult(TypeFactory.accountVotes(kernel.getBlockchain(), addressBytes));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        resp.setResult(TypeFactory.accountVotes(kernel.getBlockchain(), addressBytes));
-
-        return success(resp);
     }
 
     @Override
     public Response getBlockByHash(String hashString) {
-        GetBlockResponse resp = new GetBlockResponse();
-        if (!isSet(hashString)) {
-            return badRequest(resp, "Parameter `hash` is required");
-        }
-
-        byte[] hash;
         try {
-            hash = Hex.decode0x(hashString);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `hash` is not a valid hexadecimal string");
+            byte[] hash = parseHash(hashString, true);
+
+            Block block = kernel.getBlockchain().getBlock(hash);
+            if (block == null) {
+                return badRequest("The requested block was not found");
+            }
+
+            GetBlockResponse resp = new GetBlockResponse();
+            resp.setResult(
+                    TypeFactory.blockType(block, kernel.getBlockchain().getCoinbaseTransaction(block.getNumber())));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        Block block = kernel.getBlockchain().getBlock(hash);
-        if (block == null) {
-            return badRequest(resp, "The requested block was not found");
-        }
-
-        resp.setResult(TypeFactory.blockType(block, kernel.getBlockchain().getCoinbaseTransaction(block.getNumber())));
-
-        return success(resp);
     }
 
     @Override
     public Response getBlockByNumber(String blockNum) {
-        GetBlockResponse resp = new GetBlockResponse();
-
-        if (blockNum == null) {
-            return badRequest(resp, "Parameter `number` is required");
-        }
-
-        long blockNumLong;
         try {
-            blockNumLong = Long.parseLong(blockNum);
-        } catch (NumberFormatException e) {
-            return badRequest(resp, "Parameter `number` is not a valid number");
+            long blockNumLong = parseInt(blockNum, true, "number");
+
+            Block block = kernel.getBlockchain().getBlock(blockNumLong);
+            if (block == null) {
+                return badRequest("The requested block was not found");
+            }
+
+            GetBlockResponse resp = new GetBlockResponse();
+            resp.setResult(
+                    TypeFactory.blockType(block, kernel.getBlockchain().getCoinbaseTransaction(block.getNumber())));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        Block block = kernel.getBlockchain().getBlock(blockNumLong);
-        if (block == null) {
-            return badRequest(resp, "The requested block was not found");
-        }
-
-        resp.setResult(TypeFactory.blockType(block, kernel.getBlockchain().getCoinbaseTransaction(block.getNumber())));
-
-        return success(resp);
     }
 
     @Override
     public Response getDelegate(String address) {
-        GetDelegateResponse resp = new GetDelegateResponse();
-        if (!isSet(address)) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-
-        byte[] addressBytes;
         try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException e) {
-            return badRequest(resp, e.getMessage());
+            byte[] addressBytes = parseAddress(address, true);
+
+            Blockchain chain = kernel.getBlockchain();
+            Delegate delegate = chain.getDelegateState().getDelegateByAddress(addressBytes);
+            if (delegate == null) {
+                return badRequest("The provided address is not a delegate");
+            }
+
+            BlockchainImpl.ValidatorStats validatorStats = chain.getValidatorStats(addressBytes);
+            boolean isValidator = chain.getValidators().contains(address.replace("0x", ""));
+
+            GetDelegateResponse resp = new GetDelegateResponse();
+            resp.setResult(TypeFactory.delegateType(validatorStats, delegate, isValidator));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-        Blockchain chain = kernel.getBlockchain();
-
-        Delegate delegate = chain.getDelegateState().getDelegateByAddress(addressBytes);
-        if (delegate == null) {
-            return badRequest(resp, "The provided address is not a delegate");
-        }
-
-        BlockchainImpl.ValidatorStats validatorStats = chain.getValidatorStats(addressBytes);
-        boolean isValidator = chain.getValidators().contains(address.replace("0x", ""));
-
-        resp.setResult(TypeFactory.delegateType(validatorStats, delegate, isValidator));
-
-        return success(resp);
     }
 
     @Override
@@ -507,7 +428,7 @@ public final class SemuxApiImpl implements SemuxApi {
         GetPendingTransactionsResponse resp = new GetPendingTransactionsResponse();
         resp.result(kernel.getPendingManager().getPendingTransactions().parallelStream()
                 .map(pendingTransaction -> pendingTransaction.transaction)
-                .map(TypeFactory::pendingTransactionType)
+                .map(TypeFactory::transactionType)
                 .collect(Collectors.toList()));
 
         return success(resp);
@@ -515,43 +436,49 @@ public final class SemuxApiImpl implements SemuxApi {
 
     @Override
     public Response getTransaction(String hash) {
-        GetTransactionResponse resp = new GetTransactionResponse();
-
-        if (!isSet(hash)) {
-            return badRequest(resp, "Parameter `hash` is required");
-        }
-
-        byte[] hashBytes;
         try {
-            hashBytes = Hex.decode0x(hash);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `hash` is not a valid hexadecimal string");
+            byte[] hashBytes = parseHash(hash, true);
+
+            Transaction transaction = kernel.getBlockchain().getTransaction(hashBytes);
+            if (transaction == null) {
+                return badRequest("The request transaction was not found");
+            }
+
+            GetTransactionResponse resp = new GetTransactionResponse();
+            resp.setResult(TypeFactory.transactionType(transaction));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        Transaction transaction = kernel.getBlockchain().getTransaction(hashBytes);
-        if (transaction == null) {
-            return badRequest(resp, "The request transaction was not found");
-        }
-
-        resp.setResult(TypeFactory.transactionType(
-                kernel.getBlockchain().getTransactionBlockNumber(transaction.getHash()),
-                transaction));
-
-        return success(resp);
     }
 
     @Override
     public Response getTransactionLimits(String type) {
-        GetTransactionLimitsResponse resp = new GetTransactionLimitsResponse();
         try {
+            GetTransactionLimitsResponse resp = new GetTransactionLimitsResponse();
             resp.setResult(TypeFactory.transactionLimitsType(kernel, TransactionType.valueOf(type)));
-
             return success(resp);
         } catch (NullPointerException | IllegalArgumentException e) {
-            return badRequest(resp, String.format("Invalid transaction type. (must be one of %s)",
-                    Arrays.stream(TransactionType.values())
-                            .map(TransactionType::toString)
-                            .collect(Collectors.joining(","))));
+            return badRequest(String.format("Invalid transaction type `%s`", type));
+        }
+    }
+
+    @Override
+    public Response getTransactionResult(String hash) {
+        try {
+            byte[] hashBytes = parseHash(hash, true);
+            long number = kernel.getBlockchain().getTransactionBlockNumber(hashBytes);
+            Transaction tx = kernel.getBlockchain().getTransaction(hashBytes);
+            TransactionResult result = kernel.getBlockchain().getTransactionResult(hashBytes);
+            if (result == null) {
+                return badRequest("The request transaction was not found");
+            }
+
+            GetTransactionResultResponse resp = new GetTransactionResultResponse();
+            resp.setResult(TypeFactory.transactionResultType(tx, result, number));
+            return success(resp);
+        } catch (NullPointerException | IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
     }
 
@@ -566,56 +493,34 @@ public final class SemuxApiImpl implements SemuxApi {
 
     @Override
     public Response getVote(String delegate, String voter) {
-        GetVoteResponse resp = new GetVoteResponse();
-        byte[] voterBytes;
-        byte[] delegateBytes;
-
-        if (!isSet(voter)) {
-            return badRequest(resp, "Parameter `voter` is required");
-        }
-
-        if (!isSet(delegate)) {
-            return badRequest(resp, "Parameter `delegate` is required");
-        }
-
         try {
-            voterBytes = Hex.decode0x(voter);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `voter` is not a valid hexadecimal string");
+            byte[] voterBytes = parseAddress(voter, true, "voter");
+            byte[] delegateBytes = parseAddress(delegate, true, "delegate");
+
+            GetVoteResponse resp = new GetVoteResponse();
+            resp.setResult(
+                    TypeFactory.encodeAmount(
+                            kernel.getBlockchain().getDelegateState().getVote(voterBytes, delegateBytes)));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        try {
-            delegateBytes = Hex.decode0x(delegate);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `delegate` is not a valid hexadecimal string");
-        }
-
-        resp.setResult(
-                TypeFactory.encodeAmount(kernel.getBlockchain().getDelegateState().getVote(voterBytes, delegateBytes)));
-
-        return success(resp);
     }
 
     @Override
     public Response getVotes(String delegate) {
-        GetVotesResponse resp = new GetVotesResponse();
-        if (!isSet(delegate)) {
-            return badRequest(resp, "Parameter `delegate` is required");
-        }
-
-        byte[] delegateBytes;
         try {
-            delegateBytes = Hex.decode0x(delegate);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `delegate` is not a valid hexadecimal string");
+            byte[] delegateBytes = parseAddress(delegate, true, "delegate");
+
+            GetVotesResponse resp = new GetVotesResponse();
+            resp.setResult(kernel.getBlockchain().getDelegateState().getVotes(delegateBytes).entrySet().parallelStream()
+                    .collect(Collectors.toMap(
+                            entry -> Hex.PREF + entry.getKey().toString(),
+                            entry -> TypeFactory.encodeAmount(entry.getValue()))));
+            return success(resp);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
-
-        resp.setResult(kernel.getBlockchain().getDelegateState().getVotes(delegateBytes).entrySet().parallelStream()
-                .collect(Collectors.toMap(
-                        entry -> Hex.PREF + entry.getKey().toString(),
-                        entry -> TypeFactory.encodeAmount(entry.getValue()))));
-
-        return success(resp);
     }
 
     @Override
@@ -629,175 +534,183 @@ public final class SemuxApiImpl implements SemuxApi {
     }
 
     @Override
-    public Response registerDelegate(String from, String data, String fee, String nonce, Boolean validateNonce) {
-        return doTransaction(TransactionType.DELEGATE, from, null, null, fee, nonce, validateNonce, data);
-    }
-
-    @Override
-    public Response broadcastRawTransaction(String raw, Boolean validateNonce) {
-        DoTransactionResponse resp = new DoTransactionResponse();
-
-        if (!isSet(raw)) {
-            return badRequest(resp, "Parameter `raw` is required");
-        }
-
+    public Response broadcastRawTransaction(String raw) {
         try {
-            Transaction tx = Transaction.fromBytes(Hex.decode0x(raw));
-
-            // tx nonce is validated in advance to avoid silently pushing the tx into
-            // delayed queue of pending manager
-            if ((validateNonce != null && validateNonce)
-                    && tx.getNonce() != kernel.getPendingManager().getNonce(tx.getFrom())) {
-                return badRequest(resp, "Invalid transaction nonce.");
+            if (raw == null) {
+                return badRequest("Parameter `raw` is required");
             }
+
+            Transaction tx = Transaction.fromBytes(Hex.decode0x(raw));
 
             PendingManager.ProcessingResult result = kernel.getPendingManager().addTransactionSync(tx);
             if (result.error != null) {
-                return badRequest(resp, "Transaction rejected by pending manager: " + result.error.toString());
+                return badRequest("Transaction rejected by pending manager: " + result.error.toString());
             }
-            resp.setResult(Hex.encode0x(tx.getHash()));
 
+            DoTransactionResponse resp = new DoTransactionResponse();
+            resp.setResult(Hex.encode0x(tx.getHash()));
             return success(resp);
         } catch (CryptoException e) {
-            return badRequest(resp, "Parameter `raw` is not a valid hexadecimal string");
+            return badRequest("Parameter `raw` is not a valid hexadecimal string");
         } catch (IndexOutOfBoundsException e) {
-            return badRequest(resp, "Parameter `raw` is not a valid hexadecimal raw transaction");
+            return badRequest("Parameter `raw` is not a valid hexadecimal raw transaction");
         }
     }
 
     @Override
     public Response signMessage(String address, String message) {
-        SignMessageResponse resp = new SignMessageResponse();
-
-        if (address == null) {
-            return badRequest(resp, "Parameter `address` is required");
-        }
-
-        if (message == null) {
-            return badRequest(resp, "Parameter `message` is required");
-        }
-
         try {
-            byte[] addressBytes;
-            try {
-                addressBytes = Hex.decode0x(address);
-            } catch (CryptoException ex) {
-                return badRequest(resp, "Parameter `address` is not a valid hexadecimal string");
-            }
-
+            byte[] addressBytes = parseAddress(address, true);
             Key account = kernel.getWallet().getAccount(addressBytes);
-
             if (account == null) {
-                return badRequest(resp,
+                return badRequest(
                         String.format("The provided address %s doesn't belong to the wallet", address));
             }
 
-            Key.Signature signedMessage = account.sign(message.getBytes(CHARSET));
-            resp.setResult(Hex.encode0x(signedMessage.toBytes()));
+            if (message == null) {
+                return badRequest("Parameter `message` is required");
+            }
 
+            Key.Signature signedMessage = account.sign(message.getBytes(CHARSET));
+
+            SignMessageResponse resp = new SignMessageResponse();
+            resp.setResult(Hex.encode0x(signedMessage.toBytes()));
             return success(resp);
         } catch (NullPointerException | IllegalArgumentException e) {
-            return badRequest(resp, "Invalid message");
+            return badRequest("Invalid message");
         }
     }
 
     @Override
     public Response signRawTransaction(String raw, String address) {
-        SignRawTransactionResponse resp = new SignRawTransactionResponse();
-
-        byte[] txBytes;
         try {
-            txBytes = Hex.decode0x(raw);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `raw` is not a hexadecimal string.");
-        }
+            byte[] txBytes;
+            try {
+                txBytes = Hex.decode0x(raw);
+            } catch (CryptoException ex) {
+                return badRequest("Parameter `raw` is not a hexadecimal string.");
+            }
 
-        byte[] addressBytes;
-        try {
-            addressBytes = Hex.decode0x(address);
-        } catch (CryptoException ex) {
-            return badRequest(resp, "Parameter `address` is not a hexadecimal string.");
-        }
+            byte[] addressBytes = parseAddress(address, true);
+            Key signerKey = kernel.getWallet().getAccount(addressBytes);
+            if (signerKey == null) {
+                return badRequest("Address doesn't belong to this wallet.");
+            }
 
-        Key signerKey = kernel.getWallet().getAccount(addressBytes);
-        if (signerKey == null) {
-            return badRequest(resp, "Parameter `address` doesn't exist in the wallet.");
-        }
-
-        try {
             Transaction tx = Transaction.fromEncoded(txBytes).sign(signerKey);
-            resp.setResult(Hex.encode0x(tx.toBytes()));
 
+            SignRawTransactionResponse resp = new SignRawTransactionResponse();
+            resp.setResult(Hex.encode0x(tx.toBytes()));
             return success(resp);
         } catch (IndexOutOfBoundsException ex) {
-            return badRequest(resp, "Parameter `raw` is not a valid raw transaction.");
+            return badRequest("Parameter `raw` is not a valid raw transaction.");
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         }
     }
 
     @Override
-    public Response transfer(String from, String to, String value, String fee, String nonce, Boolean validateNonce,
-            String data) {
-        return doTransaction(TransactionType.TRANSFER, from, to, value, fee, nonce, validateNonce, data);
+    public Response transfer(String from, String to, String value, String fee, String nonce, String data) {
+        return doTransaction(TransactionType.TRANSFER, from, to, value, fee, nonce, data, null, null);
     }
 
     @Override
-    public Response create(String from, String value, String data, String gasPrice, String gas, String fee,
-            String nonce, Boolean validateNonce) {
-        return doTransaction(TransactionType.CREATE, from, null, value, fee, nonce, validateNonce, data, gasPrice,
-                gas);
+    public Response registerDelegate(String from, String data, String fee, String nonce) {
+        return doTransaction(TransactionType.DELEGATE, from, null, null, fee, nonce, data, null, null);
     }
 
     @Override
-    public Response call(String from, String to, String value, String gasPrice, String gas, String fee,
-            String nonce, Boolean validateNonce, String data, Boolean local) {
-        if (local) {
-            Transaction tx = getTransaction(TransactionType.CALL, from, to, value, fee, nonce, validateNonce, data,
-                    gasPrice, gas);
+    public Response create(String from, String data, String gas, String gasPrice, String value, String nonce) {
+        return doTransaction(TransactionType.CREATE, from, null, value, null, nonce, data, gas, gasPrice);
+    }
 
-            SemuxTransaction transaction = new SemuxTransaction(tx);
-            SemuxBlock block = new SemuxBlock(kernel.getBlockchain().getLatestBlock().getHeader(), 0);
-            Repository repository = new SemuxRepository(kernel.getBlockchain().getAccountState());
-            ProgramInvokeFactory invokeFactory = new ProgramInvokeFactoryImpl();
-            BlockStore blockStore = new SemuxBlockStore(kernel.getBlockchain());
-            long gasUsedInBlock = 0l;
+    @Override
+    public Response call(String from, String to, String gas, String gasPrice, String value, String nonce, String data) {
+        return doTransaction(TransactionType.CALL, from, to, value, "0", nonce, data, gas, gasPrice);
+    }
 
-            org.ethereum.vm.client.TransactionExecutor executor = new org.ethereum.vm.client.TransactionExecutor(
-                    transaction, block, repository, blockStore,
-                    Spec.DEFAULT, invokeFactory, gasUsedInBlock, true);
-            TransactionReceipt results = executor.run();
+    @Override
+    public Response vote(String from, String to, String value, String fee, String nonce) {
+        return doTransaction(TransactionType.VOTE, from, to, value, fee, nonce, null, null, null);
+    }
 
-            DoTransactionResponse resp = new DoTransactionResponse();
-            resp.setResult(Hex.encode0x(results.getReturnData()));
-            if (!results.isSuccess()) {
-                return badRequest(resp, "Error calling method");
-            } else {
-                return success(resp);
-            }
+    @Override
+    public Response unvote(String from, String to, String value, String fee, String nonce) {
+        return doTransaction(TransactionType.UNVOTE, from, to, value, fee, nonce, null, null, null);
+    }
+
+    private TransactionReceipt executeTransactionLocally(String to, String from, String value, String nonce,
+            String data, String gas, String gasPrice) {
+        TransactionBuilder transactionBuilder = new TransactionBuilder(kernel)
+                .withType("CALL")
+                .withTo(to)
+                .withFrom(from)
+                .withValue(value)
+                .withNonce(nonce)
+                .withData(data);
+
+        if (gas == null) {
+            transactionBuilder.withGas(Long.toString(kernel.getConfig().spec().maxBlockGasLimit()));
+        }
+        if (gasPrice == null) {
+            transactionBuilder.withGasPrice("1");
+        }
+
+        SemuxTransaction transaction = new SemuxTransaction(transactionBuilder.buildUnsigned());
+        SemuxBlock block = new SemuxBlock(kernel.getBlockchain().getLatestBlock().getHeader(),
+                kernel.getConfig().spec().maxBlockGasLimit());
+        Repository repository = new SemuxRepository(kernel.getBlockchain().getAccountState(),
+                kernel.getBlockchain().getDelegateState());
+        ProgramInvokeFactory invokeFactory = new ProgramInvokeFactoryImpl();
+        BlockStore blockStore = new SemuxBlockStore(kernel.getBlockchain());
+        long gasUsedInBlock = 0;
+
+        org.ethereum.vm.client.TransactionExecutor executor = new org.ethereum.vm.client.TransactionExecutor(
+                transaction, block, repository, blockStore,
+                kernel.getConfig().spec().vmSpec(), invokeFactory, gasUsedInBlock, true);
+
+        return executor.run();
+    }
+
+    @Override
+    public Response localCall(String to, String from, String value, String nonce, String data, String gas,
+            String gasPrice) {
+        TransactionReceipt receipt = executeTransactionLocally(to, from, value, nonce, data, gas, gasPrice);
+        if (receipt == null || !receipt.isSuccess()) {
+            return badRequest("Failed to call");
         } else {
-            return doTransaction(TransactionType.CALL, from, to, value, fee, nonce, validateNonce, data, gasPrice,
-                    gas);
+            CallResponse resp = new CallResponse();
+            resp.setResult(Hex.encode0x(receipt.getReturnData()));
+            return success(resp);
         }
     }
 
     @Override
-    public Response unvote(String from, String to, String value, String fee, String nonce, Boolean validateNonce) {
-        return doTransaction(TransactionType.UNVOTE, from, to, value, fee, nonce, validateNonce, null);
+    public Response estimateGas(String to, String from, String value, String nonce, String data, String gas,
+            String gasPrice) {
+        TransactionReceipt receipt = executeTransactionLocally(to, from, value, nonce, data, gas, gasPrice);
+        if (receipt == null || !receipt.isSuccess()) {
+            return badRequest("Failed to estimate the gas usage");
+        } else {
+            EstimateGasResponse resp = new EstimateGasResponse();
+            resp.setResult(Long.toString(receipt.getGasUsed()));
+            return success(resp);
+        }
     }
 
     @Override
     public Response verifyMessage(String address, String message, String signature) {
-        VerifyMessageResponse resp = new VerifyMessageResponse();
 
         if (address == null) {
-            return badRequest(resp, "Parameter `address` is required");
+            return badRequest("Parameter `address` is required");
         }
 
         if (message == null) {
-            return badRequest(resp, "Parameter `message` is required");
+            return badRequest("Parameter `message` is required");
         }
 
         if (signature == null) {
-            return badRequest(resp, "Parameter `signature` is required");
+            return badRequest("Parameter `signature` is required");
         }
 
         boolean isValidSignature = true;
@@ -814,24 +727,17 @@ public final class SemuxApiImpl implements SemuxApi {
             if (!Key.verify(message.getBytes(CHARSET), sig)) {
                 isValidSignature = false;
             }
-
         } catch (NullPointerException | IllegalArgumentException | CryptoException e) {
             isValidSignature = false;
         }
 
-        resp.setValidSignature(isValidSignature);
-
+        VerifyMessageResponse resp = new VerifyMessageResponse();
+        resp.setValid(isValidSignature);
         return success(resp);
     }
 
     @Override
-    public Response vote(String from, String to, String value, String fee, String nonce, Boolean validateNonce) {
-        return doTransaction(TransactionType.VOTE, from, to, value, fee, nonce, validateNonce, null);
-    }
-
-    @Override
     public Response getSyncingProgress() {
-        GetSyncingProgressResponse resp = new GetSyncingProgressResponse();
         SyncingProgressType result = new SyncingProgressType();
 
         if (kernel.getSyncManager().isRunning()) {
@@ -844,8 +750,8 @@ public final class SemuxApiImpl implements SemuxApi {
             result.setSyncing(false);
         }
 
+        GetSyncingProgressResponse resp = new GetSyncingProgressResponse();
         resp.setResult(result);
-
         return success(resp);
     }
 
@@ -865,14 +771,15 @@ public final class SemuxApiImpl implements SemuxApi {
     /**
      * Constructs a failure response out of bad request.
      *
-     * @param resp
      * @param message
      * @return
      */
-    private Response badRequest(ApiHandlerResponse resp, String message) {
+    private Response badRequest(String message) {
+        ApiHandlerResponse resp = new ApiHandlerResponse();
         resp.setSuccess(false);
         resp.setMessage(message);
 
+        logger.info("Bad request: {}", message);
         return Response.status(BAD_REQUEST).entity(resp).build();
     }
 
@@ -884,7 +791,7 @@ public final class SemuxApiImpl implements SemuxApi {
      * @return validated hostname and port number
      */
     private NodeManager.Node validateAddNodeParameter(String node) {
-        if (!isSet(node)) {
+        if (node == null) {
             throw new IllegalArgumentException("Parameter `node` is required");
         }
 
@@ -906,82 +813,123 @@ public final class SemuxApiImpl implements SemuxApi {
         return new NodeManager.Node(host, port);
     }
 
-    private Response doTransaction(TransactionType type, String from, String to, String value, String fee, String nonce,
-            Boolean validateNonce, String data) {
-        return doTransaction(type, from, to, value, fee, nonce, validateNonce, data, null, null);
-    }
-
     private Transaction getTransaction(TransactionType type, String from, String to, String value, String fee,
-            String nonce,
-            Boolean validateNonce, String data, String gasPrice, String gas) {
+            String nonce, String data, String gas, String gasPrice) {
         TransactionBuilder transactionBuilder = new TransactionBuilder(kernel)
                 .withType(type)
                 .withFrom(from)
                 .withTo(to)
                 .withValue(value)
-                .withFee(fee, true)
-                .withData(data);
-        if (type == TransactionType.CREATE || type == TransactionType.CALL) {
-            transactionBuilder.withGasPrice(gasPrice).withGas(gas);
-        }
+                .withFee(fee)
+                .withNonce(nonce)
+                .withData(data)
+                .withGas(gas)
+                .withGasPrice(gasPrice);
 
-        if (nonce != null) {
-            transactionBuilder.withNonce(nonce);
-        } else {
-            // TODO: fix race condition of auto-assigned nonce
-        }
-
-        Transaction tx = transactionBuilder.buildSigned();
-
-        // tx nonce is validated in advance to avoid silently pushing the tx into
-        // delayed queue of pending manager
-        if ((validateNonce != null && validateNonce)
-                && tx.getNonce() != kernel.getPendingManager().getNonce(tx.getFrom())) {
-            throw new IllegalArgumentException("Invalid transaction nonce.");
-        }
-        return tx;
-
+        return transactionBuilder.buildSigned();
     }
 
-    /**
-     * Constructs a transaction and adds it to pending manager.
-     *
-     * @param type
-     * @param from
-     * @param to
-     * @param value
-     * @param fee
-     * @param nonce
-     * @param validateNonce
-     * @param data
-     * @return
-     */
-    private Response doTransaction(TransactionType type, String from, String to, String value, String fee, String nonce,
-            Boolean validateNonce, String data, String gasPrice, String gas) {
+    private Response doTransaction(TransactionType type, String from, String to, String value, String fee,
+            String nonce, String data, String gas, String gasPrice) {
         DoTransactionResponse resp = new DoTransactionResponse();
         try {
-            Transaction tx = getTransaction(type, from, to, value, fee, nonce, validateNonce, data, gasPrice, gas);
+            Transaction tx = getTransaction(type, from, to, value, fee, nonce, data, gas, gasPrice);
 
             PendingManager.ProcessingResult result = kernel.getPendingManager().addTransactionSync(tx);
             if (result.error != null) {
-                return badRequest(resp, "Transaction rejected by pending manager: " + result.error.toString());
+                return badRequest("Transaction rejected by pending manager: " + result.error.toString());
             }
 
             resp.setResult(Hex.encode0x(tx.getHash()));
 
             return success(resp);
         } catch (IllegalArgumentException ex) {
-            return badRequest(resp, ex.getMessage());
+            return badRequest(ex.getMessage());
         }
     }
 
-    /**
-     * Whether a value is supplied
-     *
-     * @param value
-     * @return
-     */
-    private boolean isSet(String value) {
-        return value != null && !value.trim().isEmpty();
+    private static final String IP_ADDRESS_PATTERN = "^([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\." +
+            "([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\." +
+            "([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\." +
+            "([01]?\\d\\d?|2[0-4]\\d|25[0-5])$";
+
+    private String parseIp(String ip, boolean required) {
+        if (ip == null) {
+            if (required) {
+                throw new IllegalArgumentException("Parameter `ip` is required");
+            } else {
+                return null;
+            }
+        } else {
+            if (ip.matches(IP_ADDRESS_PATTERN)) {
+                return ip;
+            } else {
+                throw new IllegalArgumentException("Parameter `ip` is invalid");
+            }
+        }
+    }
+
+    private byte[] parseAddress(String address, boolean required) {
+        return parseAddress(address, required, "address");
+    }
+
+    private byte[] parseAddress(String address, boolean required, String name) {
+        if (address == null) {
+            if (required) {
+                throw new IllegalArgumentException("Parameter `" + name + "` is required");
+            } else {
+                return null;
+            }
+        }
+
+        try {
+            byte[] bytes = Hex.decode0x(address);
+
+            if (bytes.length != Key.ADDRESS_LEN) {
+                throw new IllegalArgumentException("Parameter `" + name + "` length is invalid");
+            }
+
+            return bytes;
+        } catch (CryptoException e) {
+            throw new IllegalArgumentException("Parameter `" + name + "` is not a valid hexadecimal string");
+        }
+    }
+
+    private byte[] parseHash(String hash, boolean required) {
+        if (hash == null) {
+            if (required) {
+                throw new IllegalArgumentException("Parameter `hash` is required");
+            } else {
+                return null;
+            }
+        }
+
+        try {
+            byte[] bytes = Hex.decode0x(hash);
+
+            if (bytes.length != Hash.HASH_LEN) {
+                throw new IllegalArgumentException("Parameter `hash` length is invalid");
+            }
+
+            return bytes;
+        } catch (CryptoException e) {
+            throw new IllegalArgumentException("Parameter `hash` is not a valid hexadecimal string");
+        }
+    }
+
+    private Integer parseInt(String num, boolean required, String name) {
+        if (num == null) {
+            if (required) {
+                throw new IllegalArgumentException("Parameter `" + name + "` is required");
+            } else {
+                return null;
+            }
+        } else {
+            try {
+                return Integer.parseInt(num);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter `" + name + "` is not a valid hexadecimal string");
+            }
+        }
     }
 }

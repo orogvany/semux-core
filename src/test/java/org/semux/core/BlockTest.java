@@ -39,7 +39,7 @@ public class BlockTest {
     private byte[] data = Bytes.of("data");
 
     private Transaction tx = new Transaction(Network.DEVNET, TransactionType.TRANSFER, Bytes.random(20), ZERO,
-            config.minTransactionFee(),
+            config.spec().minTransactionFee(),
             1, TimeUtil.currentTimeMillis(), Bytes.EMPTY_BYTES).sign(new Key());
     private TransactionResult res = new TransactionResult();
     private List<Transaction> transactions = Collections.singletonList(tx);
@@ -101,11 +101,11 @@ public class BlockTest {
                 stateRoot, data);
         Block block = new Block(header, transactions, results, view, votes);
 
-        List<Pair<Integer, Integer>> indexes = block.getTransactionIndices();
-        assertEquals(1, indexes.size());
+        Pair<byte[], List<Integer>> indexes = block.getEncodedTransactionsAndIndices();
+        assertEquals(1, indexes.getRight().size());
 
-        Pair<Integer, Integer> index = indexes.get(0);
-        SimpleDecoder dec = new SimpleDecoder(block.getEncodedTransactions(), index.getLeft());
+        Integer index = indexes.getRight().get(0);
+        SimpleDecoder dec = new SimpleDecoder(block.getEncodedTransactions(), index);
         Transaction tx2 = Transaction.fromBytes(dec.readBytes());
         assertArrayEquals(tx.getHash(), tx2.getHash());
     }
@@ -116,10 +116,11 @@ public class BlockTest {
                 resultsRoot, stateRoot, data);
         BlockHeader header = new BlockHeader(number, coinbase, previousHeader.getHash(), timestamp, transactionsRoot,
                 resultsRoot, stateRoot, data);
+        Block block = new Block(header, transactions);
 
-        assertTrue(Block.validateHeader(previousHeader, header));
-        assertTrue(Block.validateTransactions(previousHeader, transactions, Network.DEVNET));
-        assertTrue(Block.validateResults(previousHeader, results));
+        assertTrue(block.validateHeader(header, previousHeader));
+        assertTrue(block.validateTransactions(previousHeader, transactions, Network.DEVNET));
+        assertTrue(block.validateResults(previousHeader, results));
     }
 
     @Test
@@ -128,10 +129,11 @@ public class BlockTest {
                 resultsRoot, stateRoot, data);
         BlockHeader header = new BlockHeader(number, coinbase, previousHeader.getHash(), timestamp, transactionsRoot,
                 resultsRoot, stateRoot, data);
+        Block block = new Block(header, transactions);
 
-        assertTrue(Block.validateHeader(previousHeader, header));
-        assertTrue(Block.validateTransactions(previousHeader, Collections.singleton(transactions.get(0)), transactions,
+        assertTrue(block.validateHeader(header, previousHeader));
+        assertTrue(block.validateTransactions(previousHeader, Collections.singleton(transactions.get(0)), transactions,
                 Network.DEVNET));
-        assertTrue(Block.validateResults(previousHeader, results));
+        assertTrue(block.validateResults(previousHeader, results));
     }
 }

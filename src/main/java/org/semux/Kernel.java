@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -25,6 +26,7 @@ import org.semux.consensus.SemuxSync;
 import org.semux.core.BftManager;
 import org.semux.core.Blockchain;
 import org.semux.core.BlockchainImpl;
+import org.semux.core.Genesis;
 import org.semux.core.PendingManager;
 import org.semux.core.SyncManager;
 import org.semux.core.Wallet;
@@ -76,8 +78,8 @@ public class Kernel {
 
     protected State state = State.STOPPED;
 
-    protected final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
     protected Config config;
+    protected Genesis genesis;
 
     protected Wallet wallet;
     protected Key coinbase;
@@ -104,13 +106,15 @@ public class Kernel {
      * 
      * @param config
      *            the config instance
+     * @prarm genesis the genesis instance
      * @param wallet
      *            the wallet instance
      * @param coinbase
      *            the coinbase key
      */
-    public Kernel(Config config, Wallet wallet, Key coinbase) {
+    public Kernel(Config config, Genesis genesis, Wallet wallet, Key coinbase) {
         this.config = config;
+        this.genesis = genesis;
         this.wallet = wallet;
         this.coinbase = coinbase;
     }
@@ -144,7 +148,7 @@ public class Kernel {
         } else {
             dbFactory = new BerkeleyFactory(config.dataDir());
         }
-        chain = new BlockchainImpl(config, dbFactory);
+        chain = new BlockchainImpl(config, genesis, dbFactory);
         long number = chain.getLatestBlockNumber();
         logger.info("Latest block number = {}", number);
 
@@ -257,7 +261,7 @@ public class Kernel {
         dstDir.mkdirs();
 
         // move to destination
-        for (File f : files) {
+        for (File f : Objects.requireNonNull(files)) {
             f.renameTo(new File(dstDir, f.getName()));
         }
     }
@@ -365,7 +369,7 @@ public class Kernel {
         client.close();
 
         // make sure no thread is reading/writing the state
-        ReentrantReadWriteLock.WriteLock lock = stateLock.writeLock();
+        ReentrantReadWriteLock.WriteLock lock = chain.getStateLock().writeLock();
         lock.lock();
         try {
             for (DatabaseName name : DatabaseName.values()) {
@@ -457,15 +461,6 @@ public class Kernel {
      */
     public Config getConfig() {
         return config;
-    }
-
-    /**
-     * Returns the state lock.
-     * 
-     * @return
-     */
-    public ReentrantReadWriteLock getStateLock() {
-        return stateLock;
     }
 
     /**

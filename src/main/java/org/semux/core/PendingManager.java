@@ -22,12 +22,14 @@ import org.ethereum.vm.client.BlockStore;
 import org.semux.Kernel;
 import org.semux.core.state.AccountState;
 import org.semux.core.state.DelegateState;
+import org.semux.crypto.Key;
 import org.semux.net.Channel;
 import org.semux.net.msg.p2p.TransactionMessage;
 import org.semux.util.ArrayUtil;
 import org.semux.util.ByteArray;
 import org.semux.util.Bytes;
 import org.semux.util.TimeUtil;
+import org.semux.vm.client.SemuxBlock;
 import org.semux.vm.client.SemuxBlockStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,8 +41,12 @@ import com.github.benmanes.caffeine.cache.Caffeine;
  * Pending manager maintains all unconfirmed transactions, either from kernel or
  * network. All transactions are evaluated and propagated to peers if success.
  *
- * TODO: sort transaction queue by fee, and other metrics
+ * Note that: the transaction results in pending manager are not reliable for VM
+ * transactions because these are evaluated against a dummy block. Nevertheless,
+ * transactions included by the pending manager are eligible for inclusion in
+ * block proposing phase.
  *
+ * TODO: sort transaction queue by fee, and other metrics
  */
 public class PendingManager implements Runnable, BlockchainListener {
 
@@ -67,6 +73,7 @@ public class PendingManager implements Runnable, BlockchainListener {
     private final BlockStore blockStore;
     private AccountState pendingAS;
     private DelegateState pendingDS;
+    private SemuxBlock dummyBlock;
 
     /**
      * Transaction queue.
@@ -101,6 +108,7 @@ public class PendingManager implements Runnable, BlockchainListener {
 
         this.pendingAS = kernel.getBlockchain().getAccountState().track();
         this.pendingDS = kernel.getBlockchain().getDelegateState().track();
+        this.dummyBlock = createDummyBlock();
 
         this.exec = Executors.newSingleThreadScheduledExecutor(factory);
     }
@@ -178,6 +186,11 @@ public class PendingManager implements Runnable, BlockchainListener {
      * @return The processing result
      */
     public synchronized ProcessingResult addTransactionSync(Transaction tx) {
+        // nonce check for transactions from this client
+        if (tx.getNonce() != getNonce(tx.getFrom())) {
+            return new ProcessingResult(0, TransactionResult.Code.INVALID_NONCE);
+        }
+
         if (/* queue/transactions limits are ignored */ tx.validate(kernel.getConfig().network())) {
             return processTransaction(tx, true);
         } else {
@@ -198,26 +211,21 @@ public class PendingManager implements Runnable, BlockchainListener {
     /**
      * Returns pending transactions, limited by the given total size in bytes.
      *
-     * @param byteLimit
+     *
      * @return
      */
-    public synchronized List<PendingTransaction> getPendingTransactions(int byteLimit) {
-        if (byteLimit < 0) {
-            throw new IllegalArgumentException("Limit can't be negative");
-        }
-
+    public synchronized List<PendingTransaction> getPendingTransactions(long blockGasLimit) {
         List<PendingTransaction> txs = new ArrayList<>();
         Iterator<PendingTransaction> it = transactions.iterator();
 
-        int size = 0;
-        while (it.hasNext()) {
+        while (it.hasNext() && blockGasLimit > 0) {
             PendingTransaction tx = it.next();
 
-            size += tx.transaction.size();
-            if (size > byteLimit) {
-                break;
-            } else {
+            long gasUsage = tx.transaction.isVMTransaction() ? tx.result.getGasUsed()
+                    : kernel.getConfig().spec().nonVMTransactionGasCost();
+            if (blockGasLimit > gasUsage) {
                 txs.add(tx);
+                blockGasLimit -= gasUsage;
             }
         }
 
@@ -230,7 +238,7 @@ public class PendingManager implements Runnable, BlockchainListener {
      * @return
      */
     public synchronized List<PendingTransaction> getPendingTransactions() {
-        return getPendingTransactions(Integer.MAX_VALUE);
+        return getPendingTransactions(Long.MAX_VALUE);
     }
 
     /**
@@ -242,6 +250,7 @@ public class PendingManager implements Runnable, BlockchainListener {
         // reset state
         pendingAS = kernel.getBlockchain().getAccountState().track();
         pendingDS = kernel.getBlockchain().getDelegateState().track();
+        dummyBlock = createDummyBlock();
 
         // clear transaction pool
         List<PendingTransaction> txs = new ArrayList<>(transactions);
@@ -265,7 +274,7 @@ public class PendingManager implements Runnable, BlockchainListener {
             }
 
             long t2 = TimeUtil.currentTimeMillis();
-            logger.debug("Pending tx re-evaluation: # txs = {} / {},  time = {} ms", accepted, txs.size(), t2 - t1);
+            logger.debug("Execute pending transactions: # txs = {} / {},  time = {} ms", accepted, txs.size(), t2 - t1);
         }
     }
 
@@ -309,20 +318,23 @@ public class PendingManager implements Runnable, BlockchainListener {
         long now = TimeUtil.currentTimeMillis();
 
         // reject VM transactions that come in before fork
-        if (!kernel.getBlockchain().isForkActivated(Fork.VIRTUAL_MACHINE)
-                && (tx.getType() == TransactionType.CALL || tx.getType() == TransactionType.CREATE)) {
+        if (tx.isVMTransaction() && !kernel.getBlockchain().isForkActivated(Fork.VIRTUAL_MACHINE)) {
             return new ProcessingResult(0, TransactionResult.Code.INVALID_TYPE);
+        }
+        // reject VM transaction with low gas price
+        if (tx.isVMTransaction() && tx.getGasPrice().lessThan(kernel.getConfig().poolMinGasPrice())) {
+            return new ProcessingResult(0, TransactionResult.Code.INVALID_FEE);
         }
 
         // reject transactions with a duplicated tx hash
         if (kernel.getBlockchain().hasTransaction(tx.getHash())) {
-            return new ProcessingResult(0, TransactionResult.Code.DUPLICATE_TRANSACTION);
+            return new ProcessingResult(0, TransactionResult.Code.INVALID);
         }
 
         // check transaction timestamp if this is a fresh transaction:
         // a time drift of 2 hours is allowed by default
-        if (tx.getTimestamp() < now - kernel.getConfig().maxTransactionTimeDrift()
-                || tx.getTimestamp() > now + kernel.getConfig().maxTransactionTimeDrift()) {
+        if (tx.getTimestamp() < now - kernel.getConfig().poolMaxTransactionTimeDrift()
+                || tx.getTimestamp() > now + kernel.getConfig().poolMaxTransactionTimeDrift()) {
             return new ProcessingResult(0, TransactionResult.Code.INVALID_TIMESTAMP);
         }
 
@@ -342,9 +354,9 @@ public class PendingManager implements Runnable, BlockchainListener {
             AccountState as = pendingAS.track();
             DelegateState ds = pendingDS.track();
             TransactionResult result = new TransactionExecutor(kernel.getConfig(), blockStore).execute(tx,
-                    as, ds, null);
+                    as, ds, dummyBlock, kernel.getBlockchain(), 0);
 
-            if (result.getCode().isAccepted()) {
+            if (result.getCode().isAcceptable()) {
                 // commit state updates
                 as.commit();
                 ds.commit();
@@ -391,6 +403,16 @@ public class PendingManager implements Runnable, BlockchainListener {
 
     private ByteArray createKey(byte[] acc, long nonce) {
         return ByteArray.of(Bytes.merge(acc, Bytes.of(nonce)));
+    }
+
+    private SemuxBlock createDummyBlock() {
+        Blockchain chain = kernel.getBlockchain();
+        Block prevBlock = chain.getLatestBlock();
+        BlockHeader blockHeader = new BlockHeader(
+                prevBlock.getNumber() + 1,
+                new Key().toAddress(), prevBlock.getHash(), System.currentTimeMillis(), Bytes.EMPTY_BYTES,
+                Bytes.EMPTY_BYTES, Bytes.EMPTY_BYTES, Bytes.EMPTY_BYTES);
+        return new SemuxBlock(blockHeader, kernel.getConfig().spec().maxBlockGasLimit());
     }
 
     /**

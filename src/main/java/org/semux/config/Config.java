@@ -16,8 +16,7 @@ import java.util.Set;
 import org.semux.Network;
 import org.semux.core.Amount;
 import org.semux.core.Fork;
-import org.semux.core.TransactionType;
-import org.semux.net.CapabilitySet;
+import org.semux.net.CapabilityTreeSet;
 import org.semux.net.NodeManager.Node;
 import org.semux.net.msg.MessageCode;
 
@@ -25,6 +24,13 @@ import org.semux.net.msg.MessageCode;
  * Describes the blockchain configurations.
  */
 public interface Config {
+
+    /**
+     * Returns the chain specification.
+     *
+     * @return
+     */
+    ChainSpec spec();
 
     // =========================
     // General
@@ -78,78 +84,6 @@ public interface Config {
     short networkVersion();
 
     /**
-     * Returns the max total size of all transactions in a block, encoding overhead
-     * not counted.
-     *
-     * @return
-     */
-    int maxBlockTransactionsSize();
-
-    /**
-     * Returns the max data size for the given transaction type.
-     *
-     * @return
-     */
-    int maxTransactionDataSize(TransactionType type);
-
-    /**
-     * Returns the min transaction fee.
-     *
-     * @return
-     */
-    Amount minTransactionFee();
-
-    /**
-     * Returns the maximum allowed time drift between transaction timestamp and
-     * local clock. See ${@link org.semux.core.PendingManager#processTransaction}
-     *
-     * @return
-     */
-    long maxTransactionTimeDrift();
-
-    /**
-     * Returns the min amount of value burned when registering as a delegate.
-     *
-     * @return
-     */
-    Amount minDelegateBurnAmount();
-
-    /**
-     * Returns the block reward for a specific block.
-     *
-     * @param number
-     *            block number
-     * @return the block reward
-     */
-    Amount getBlockReward(long number);
-
-    /**
-     * Returns the validator update rate.
-     *
-     * @return
-     */
-    long getValidatorUpdateInterval();
-
-    /**
-     * Returns the number of validators.
-     *
-     * @param number
-     * @return
-     */
-    int getNumberOfValidators(long number);
-
-    /**
-     * Returns the primary validator for a specific [height, view].
-     *
-     * @param validators
-     * @param height
-     * @param view
-     * @param uniformDist
-     * @return
-     */
-    String getPrimaryValidator(List<String> validators, long height, int view, boolean uniformDist);
-
-    /**
      * Returns the client id.
      *
      * @return
@@ -161,7 +95,7 @@ public interface Config {
      * 
      * @return
      */
-    CapabilitySet getClientCapabilities();
+    CapabilityTreeSet getClientCapabilities();
 
     // =========================
     // P2P
@@ -312,6 +246,21 @@ public interface Config {
      */
     int syncMaxPendingBlocks();
 
+    /**
+     * Returns whether to disconnect the peer is an invalid block is received.
+     *
+     * @return
+     */
+    boolean syncDisconnectOnInvalidBlock();
+
+    /**
+     * Returns whether to use FAST_SYNC. When enabled, votes are downloaded for
+     * pivot blocks only.
+     *
+     * @return
+     */
+    boolean syncFastSync();
+
     // =========================
     // API
     // =========================
@@ -403,46 +352,33 @@ public interface Config {
      *
      * @return
      */
-    long maxBlockTimeDrift();
+    long bftMaxBlockTimeDrift();
 
     // =========================
-    // Virtual machine
+    // Transaction pool
     // =========================
 
     /**
-     * Returns the max size of process stack in words.
+     * Returns the maximum gas limit for a block proposal, local setting
      *
      * @return
      */
-    int vmMaxStackSize();
+    int poolBlockGasLimit();
 
     /**
-     * Returns the initial size of process heap in bytes.
-     *
-     * @return
-     */
-    int vmInitialHeapSize();
-
-    /**
-     * Returns the maximum gas limit for a block proposal
-     *
-     * @return
-     */
-    int vmBlockGasLimit();
-
-    /**
-     * Returns the maximum gas limit for any block
+     * Returns the minimum gas price for any transaction proposed, local setting
      * 
      * @return
      */
-    int vmMaxBlockGasLimit();
+    Amount poolMinGasPrice();
 
     /**
-     * Returns the minimum gas price for any transaction proposed
-     * 
+     * Returns the maximum allowed time drift between transaction timestamp and
+     * local clock.
+     *
      * @return
      */
-    int vmMinGasPrice();
+    long poolMaxTransactionTimeDrift();
 
     // =========================
     // UI
@@ -453,7 +389,7 @@ public interface Config {
      *
      * @return
      */
-    Locale locale();
+    Locale uiLocale();
 
     /**
      * Returns the unit of displayed values.
@@ -499,10 +435,10 @@ public interface Config {
     Map<Long, byte[]> checkpoints();
 
     /**
-     * Get fork activation checkpoints.
+     * Returns manually activated forks.
      *
      * @return a map of Validator-Activated fork activation checkpoints [fork] =>
      *         [block height]
      */
-    Map<Fork, Long> forkActivationCheckpoints();
+    Map<Fork, Long> manuallyActivatedForks();
 }

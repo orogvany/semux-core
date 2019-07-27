@@ -14,16 +14,20 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.PUT;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientBuilder;
+import javax.ws.rs.client.Entity;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 
 import org.apache.commons.lang3.RandomUtils;
-import org.apache.cxf.jaxrs.client.WebClient;
+import org.glassfish.jersey.client.ClientConfig;
+import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
+import org.glassfish.jersey.jackson.JacksonFeature;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -33,16 +37,15 @@ import org.semux.api.ApiVersion;
 import org.semux.api.v2.model.ApiHandlerResponse;
 import org.semux.crypto.Hex;
 import org.semux.util.Bytes;
-
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The test case covers validation rules of {@link SemuxApiImpl}
  */
 @RunWith(Parameterized.class)
 public class SemuxApiErrorTest extends SemuxApiTestBase {
+    private static final Logger logger = LoggerFactory.getLogger(SemuxApiErrorTest.class);
 
     private static final String ADDRESS_PLACEHOLDER = "[wallet]";
 
@@ -57,13 +60,13 @@ public class SemuxApiErrorTest extends SemuxApiTestBase {
 
                 { POST.class, uriBuilder("addNode").queryParam("node", ".com:65536").build() },
 
-                { PUT.class, uriBuilder("addToBlacklist").build() },
+                { POST.class, uriBuilder("addToBlacklist").build() },
 
-                { PUT.class, uriBuilder("addToBlacklist").queryParam("ip", "I_am_not_an_ip").build() },
+                { POST.class, uriBuilder("addToBlacklist").queryParam("ip", "I_am_not_an_ip").build() },
 
-                { PUT.class, uriBuilder("addToWhitelist").build() },
+                { POST.class, uriBuilder("addToWhitelist").build() },
 
-                { PUT.class, uriBuilder("addToWhitelist").queryParam("ip", "I_am_not_an_ip").build() },
+                { POST.class, uriBuilder("addToWhitelist").queryParam("ip", "I_am_not_an_ip").build() },
 
                 { GET.class, uriBuilder("getBlockByNumber").build() },
 
@@ -144,10 +147,6 @@ public class SemuxApiErrorTest extends SemuxApiTestBase {
                 { POST.class,
                         uriBuilder("transfer").queryParam("from", ADDRESS_PLACEHOLDER).queryParam("to", "_").build() },
 
-                { POST.class,
-                        uriBuilder("transfer").queryParam("from", ADDRESS_PLACEHOLDER).queryParam("to", randomHex())
-                                .build() },
-
                 // non-number
                 { POST.class,
                         uriBuilder("transfer").queryParam("from", ADDRESS_PLACEHOLDER).queryParam("to", randomHex())
@@ -194,15 +193,26 @@ public class SemuxApiErrorTest extends SemuxApiTestBase {
                 ? "?" + uri.getQuery().replace(ADDRESS_PLACEHOLDER, wallet.getAccount(0).toAddressString())
                 : "");
 
-        WebClient webClient = WebClient.create(
-                String.format("http://%s:%d/%s%s", config.apiListenIp(), config.apiListenPort(),
-                        ApiVersion.DEFAULT.prefix, uriString),
-                Collections.singletonList(new JacksonJsonProvider(
-                        new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false))),
-                config.apiUsername(),
-                config.apiPassword(),
-                null);
-        Response response = webClient.invoke(httpMethod.getSimpleName(), null);
+        HttpAuthenticationFeature feature = HttpAuthenticationFeature.basicBuilder()
+                .nonPreemptive()
+                .credentials(config.apiUsername(), config.apiPassword())
+                .build();
+        ClientConfig clientConfig = new ClientConfig();
+        clientConfig.register(feature);
+        clientConfig.register(JacksonFeature.class);
+        Client client = ClientBuilder.newClient(clientConfig);
+
+        String url = String.format("http://%s:%d/%s%s", config.apiListenIp(), config.apiListenPort(),
+                ApiVersion.DEFAULT.prefix, uriString);
+
+        Response response = null;
+        if (httpMethod == GET.class) {
+            response = client.target(url).request().get();
+        } else if (httpMethod == PUT.class) {
+            response = client.target(url).request().put(Entity.json(""));
+        } else if (httpMethod == POST.class) {
+            response = client.target(url).request().post(Entity.json(""));
+        }
         assertNotNull(response);
 
         assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), response.getStatus());
@@ -210,7 +220,7 @@ public class SemuxApiErrorTest extends SemuxApiTestBase {
         assertNotNull(apiHandlerResponse);
         assertNotNull(apiHandlerResponse.getMessage());
         assertFalse(apiHandlerResponse.isSuccess());
-        System.out.println(apiHandlerResponse.getMessage());
+        logger.info(apiHandlerResponse.getMessage());
     }
 
     private static String randomHex() {

@@ -36,7 +36,6 @@ import javax.swing.table.TableRowSorter;
 import org.semux.Kernel;
 import org.semux.core.Wallet;
 import org.semux.crypto.Hex;
-import org.semux.crypto.Key;
 import org.semux.gui.Action;
 import org.semux.gui.SemuxGui;
 import org.semux.gui.SwingUtil;
@@ -83,7 +82,7 @@ public class ReceivePanel extends JPanel implements ActionListener {
         table.setGridColor(Color.LIGHT_GRAY);
         table.setRowHeight(25);
         table.getTableHeader().setPreferredSize(new Dimension(10000, 24));
-        SwingUtil.setColumnWidths(table, 600, 0.05, 0.1, 0.55, 0.15, 0.15);
+        SwingUtil.setColumnWidths(table, 600, 0.05, 0.16, 0.55, 0.12, 0.12);
         SwingUtil.setColumnAlignments(table, false, false, false, true, true);
 
         table.getSelectionModel().addListSelectionListener(
@@ -316,15 +315,17 @@ public class ReceivePanel extends JPanel implements ActionListener {
      */
     protected void newAccount() {
         Wallet wallet = kernel.getWallet();
-        Key key = wallet.addAccount();
-        boolean added = wallet.flush();
 
-        if (added) {
+        if (SemuxGui.HD_WALLET_ENABLED) {
+            wallet.addAccountWithNextHdKey();
+        } else {
+            wallet.addAccountRandom();
+        }
+
+        if (wallet.flush()) {
             gui.updateModel();
-
             JOptionPane.showMessageDialog(this, GuiMessages.get("NewAccountCreated"));
         } else {
-            wallet.removeAccount(key);
             JOptionPane.showMessageDialog(this, GuiMessages.get("WalletSaveFailed"));
         }
     }

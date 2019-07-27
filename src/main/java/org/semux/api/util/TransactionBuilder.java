@@ -6,8 +6,6 @@
  */
 package org.semux.api.util;
 
-import static org.semux.core.Amount.Unit.NANO_SEM;
-
 import org.semux.Kernel;
 import org.semux.Network;
 import org.semux.core.Amount;
@@ -17,7 +15,6 @@ import org.semux.crypto.CryptoException;
 import org.semux.crypto.Hex;
 import org.semux.crypto.Key;
 import org.semux.util.Bytes;
-import org.semux.util.TimeUtil;
 
 /**
  * This is a builder class for building transactions required by Semux API with
@@ -72,201 +69,230 @@ public class TransactionBuilder {
      */
     private byte[] data;
 
-    private long gasPrice = 0;
-    private long gas = 0;
+    private Long gas = null;
+    private Amount gasPrice = Amount.ZERO;
 
     public TransactionBuilder(Kernel kernel) {
         this.kernel = kernel;
     }
 
     public TransactionBuilder withType(TransactionType type) {
-        if (type == null) {
-            throw new IllegalArgumentException("Parameter `type` is required");
+        if (type != null) {
+            this.type = type;
         }
-
-        this.type = type;
         return this;
     }
 
     public TransactionBuilder withType(String type) {
-        if (type == null) {
-            throw new IllegalArgumentException("Parameter `type` is required");
+        if (type != null) {
+            try {
+                this.type = TransactionType.valueOf(type);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Parameter `type` is invalid");
+            }
         }
-
-        this.type = TransactionType.valueOf(type);
         return this;
     }
 
     public TransactionBuilder withNetwork(String network) {
-        if (network == null) {
-            throw new IllegalArgumentException("Parameter `network` is required");
+        if (network != null) {
+            try {
+                this.network = Network.valueOf(network);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Parameter `network` is invalid");
+            }
         }
-
-        this.network = Network.valueOf(network);
         return this;
     }
 
     public TransactionBuilder withFrom(String from) {
-        if (from == null) {
-            throw new IllegalArgumentException("Parameter `from` is required");
-        }
+        if (from != null) {
+            try {
+                this.account = kernel.getWallet().getAccount(Hex.decode0x(from));
+            } catch (CryptoException e) {
+                throw new IllegalArgumentException("Parameter `from` is not a valid hexadecimal string");
+            }
 
-        try {
-            account = kernel.getWallet().getAccount(Hex.decode0x(from));
-        } catch (CryptoException e) {
-            throw new IllegalArgumentException("Parameter `from` is not a valid hexadecimal string");
+            if (account == null) {
+                throw new IllegalArgumentException(
+                        String.format("The provided address %s doesn't belong to the wallet", from));
+            }
         }
-
-        if (account == null) {
-            throw new IllegalArgumentException(
-                    String.format("The provided address %s doesn't belong to the wallet", from));
-        }
-
         return this;
     }
 
     public TransactionBuilder withTo(String to) {
-        if (type == TransactionType.DELEGATE) {
-            if (to != null && !to.isEmpty()) {
-                throw new IllegalArgumentException("Parameter `to` is not needed for DELEGATE transaction");
+        if (to != null) {
+            try {
+                this.to = Hex.decode0x(to);
+            } catch (CryptoException e) {
+                throw new IllegalArgumentException("Parameter `to` is not a valid hexadecimal string");
             }
-            return this; // ignore the provided parameter
-        }
-        if (type == TransactionType.CREATE) {
-            if (to != null && !to.isEmpty()) {
-                throw new IllegalArgumentException("Parameter `to` is not needed for CREATE transaction");
+
+            if (this.to.length != Key.ADDRESS_LEN) {
+                throw new IllegalArgumentException("Parameter `to` is not a valid address");
             }
-            return this; // ignore the provided parameter
-        }
-
-        if (to == null) {
-            throw new IllegalArgumentException("Parameter `to` is required");
-        }
-
-        try {
-            this.to = Hex.decode0x(to);
-        } catch (CryptoException e) {
-            throw new IllegalArgumentException("Parameter `to` is not a valid hexadecimal string");
-        }
-
-        if (this.to.length != Key.ADDRESS_LEN) {
-            throw new IllegalArgumentException("Parameter `to` is not a valid address");
         }
 
         return this;
     }
 
+    // value is optional
     public TransactionBuilder withValue(String value) {
-        if (type == TransactionType.DELEGATE) {
-            if (value != null && !value.isEmpty()) {
-                throw new IllegalArgumentException("Parameter `value` is not needed for DELEGATE transaction");
+        if (value != null) {
+            try {
+                this.value = Amount.of(value);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter `value` is not a valid number");
             }
-            return this; // ignore the provided parameter
-        }
-
-        if (value == null) {
-            throw new IllegalArgumentException("Parameter `value` is required");
-        }
-
-        try {
-            this.value = NANO_SEM.of(Long.parseLong(value));
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter `value` is not a valid number");
         }
 
         return this;
     }
 
-    public TransactionBuilder withFee(String fee, boolean optional) {
-        if (optional && (fee == null || fee.isEmpty())) {
-            this.fee = kernel.getConfig().minTransactionFee();
-            return this;
-        }
-
-        try {
-            this.fee = NANO_SEM.of(Long.parseLong(fee));
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter `fee` is not a valid number");
+    public TransactionBuilder withFee(String fee) {
+        if (fee != null) {
+            try {
+                this.fee = Amount.of(fee);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter `fee` is not a valid number");
+            }
         }
 
         return this;
     }
 
     public TransactionBuilder withNonce(String nonce) {
-        try {
-            this.nonce = Long.parseLong(nonce);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter 'nonce' is not a valid number");
+        if (nonce != null) {
+            try {
+                this.nonce = Long.parseLong(nonce);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter 'nonce' is not a valid number");
+            }
         }
         return this;
     }
 
     public TransactionBuilder withTimestamp(String timestamp) {
-        try {
-            this.timestamp = timestamp != null && !timestamp.isEmpty() ? Long.parseLong(timestamp) : null;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter 'timestamp' is not a valid number");
+        if (timestamp != null) {
+            try {
+                this.timestamp = Long.parseLong(timestamp);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter 'timestamp' is not a valid number");
+            }
         }
         return this;
     }
 
     public TransactionBuilder withData(String data) {
-        try {
-            this.data = (data == null) ? Bytes.EMPTY_BYTES : Hex.decode0x(data);
-        } catch (CryptoException e) {
-            throw new IllegalArgumentException("Parameter `data` is not a valid hexadecimal string");
+        if (data != null) {
+            try {
+                this.data = Hex.decode0x(data);
+            } catch (CryptoException e) {
+                throw new IllegalArgumentException("Parameter `data` is not a valid hexadecimal string");
+            }
         }
-
-        return this;
-    }
-
-    public TransactionBuilder withGasPrice(String gasPrice) {
-        if (gasPrice == null) {
-            throw new IllegalArgumentException("Parameter `gasPrice` is required");
-        }
-
-        try {
-            this.gasPrice = Long.parseLong(gasPrice);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter `gasPrice` is not a valid number");
-        }
-
         return this;
     }
 
     public TransactionBuilder withGas(String gasLimit) {
-        if (gasLimit == null) {
-            throw new IllegalArgumentException("Parameter `gas` is required");
+        if (gasLimit != null) {
+            try {
+                this.gas = Long.parseLong(gasLimit);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter `gas` is not a valid number");
+            }
         }
+        return this;
+    }
 
-        try {
-            this.gas = Long.parseLong(gasLimit);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Parameter `gas` is not a valid number");
+    public TransactionBuilder withGasPrice(String gasPrice) {
+        if (gasPrice != null) {
+            try {
+                this.gasPrice = Amount.of(gasPrice);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Parameter `gasPrice` is not a valid number");
+            }
         }
-
         return this;
     }
 
     public Transaction buildUnsigned() {
-        // DELEGATE transaction has fixed receiver and value
-        if (type == TransactionType.DELEGATE) {
-            to = Bytes.EMPTY_ADDRESS;
-            value = kernel.getConfig().minDelegateBurnAmount();
-        }
-        if (type == TransactionType.CREATE) {
-            to = Bytes.EMPTY_ADDRESS;
+        Network network = (this.network != null) ? this.network : kernel.getConfig().network();
+
+        TransactionType type = this.type;
+        if (type == null) {
+            throw new IllegalArgumentException("Parameter `type` is required");
         }
 
-        return new Transaction(
-                network != null ? network : kernel.getConfig().network(),
-                type,
-                to,
-                value,
-                fee,
-                nonce != null ? nonce : kernel.getPendingManager().getNonce(account.toAddress()),
-                timestamp != null ? timestamp : TimeUtil.currentTimeMillis(),
-                data, gas, gasPrice);
+        Key account = this.account;
+        if (account == null) {
+            account = kernel.getCoinbase();
+        }
+
+        byte[] to = this.to;
+        if (to == null) {
+            if (type == TransactionType.DELEGATE || type == TransactionType.CREATE) {
+                to = Bytes.EMPTY_ADDRESS;
+            } else {
+                throw new IllegalArgumentException("Parameter `to` is required");
+            }
+        }
+
+        Amount value = this.value;
+        if (value == null) {
+            if (type == TransactionType.DELEGATE) {
+                value = kernel.getConfig().spec().minDelegateBurnAmount();
+            } else if (type == TransactionType.CREATE || type == TransactionType.CALL) {
+                value = Amount.ZERO;
+            } else {
+                throw new IllegalArgumentException("Parameter `value` is required");
+            }
+        }
+
+        Amount fee = this.fee;
+        if (fee == null) {
+            if (type == TransactionType.CALL || type == TransactionType.CREATE) {
+                fee = Amount.ZERO;
+            } else {
+                fee = kernel.getConfig().spec().minTransactionFee();
+            }
+        }
+
+        Long nonce = this.nonce;
+        if (nonce == null) {
+            nonce = kernel.getPendingManager().getNonce(account.toAddress());
+        }
+
+        Long timestamp = this.timestamp;
+        if (timestamp == null) {
+            timestamp = System.currentTimeMillis();
+        }
+
+        byte[] data = this.data;
+        if (data == null) {
+            data = Bytes.EMPTY_BYTES;
+        }
+
+        Long gas = this.gas;
+        if (gas == null) {
+            if (type != TransactionType.CALL && type != TransactionType.CREATE) {
+                gas = 0L;
+            } else {
+                throw new IllegalArgumentException("Parameter `gas` is required");
+            }
+        }
+
+        Amount gasPrice = this.gasPrice;
+        if (gasPrice == null) {
+            if (type != TransactionType.CALL && type != TransactionType.CREATE) {
+                gasPrice = Amount.ZERO;
+            } else {
+                throw new IllegalArgumentException("Parameter `gasPrice` is required");
+            }
+        }
+
+        return new Transaction(network, type, to, value, fee, nonce, timestamp, data, gas, gasPrice);
     }
 
     public Transaction buildSigned() {

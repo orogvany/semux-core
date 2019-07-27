@@ -98,13 +98,11 @@ public class MessageQueue {
      * @param code
      */
     public void disconnect(ReasonCode code) {
-        logger.debug("Disconnect: reason = {}", code);
+        logger.debug("Actively closing the connection: reason = {}", code);
 
         // avoid repeating close requests
         if (isClosed.compareAndSet(false, true)) {
-            ctx.writeAndFlush(new DisconnectMessage(code)).addListener((ChannelFutureListener) future -> {
-                ctx.close();
-            });
+            ctx.writeAndFlush(new DisconnectMessage(code)).addListener((ChannelFutureListener) future -> ctx.close());
         }
     }
 

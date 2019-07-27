@@ -18,13 +18,17 @@ import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
+import javax.swing.AbstractAction;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.ws.rs.Path;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Response;
@@ -33,6 +37,8 @@ import org.semux.api.v2.SemuxApi;
 import org.semux.api.v2.SemuxApiImpl;
 import org.semux.gui.SemuxGui;
 import org.semux.message.GuiMessages;
+import org.semux.util.CircularFixedSizeList;
+import org.semux.util.CommandParser;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,7 +50,8 @@ public class ConsoleDialog extends JDialog implements ActionListener {
 
     private static final long serialVersionUID = 1L;
 
-    public static final String HELP = "help";
+    private static final String HELP = "help";
+    private static final String NULL = "null";
 
     private final JTextArea console;
     private final JTextField input;
@@ -52,6 +59,7 @@ public class ConsoleDialog extends JDialog implements ActionListener {
     private final transient SemuxApiImpl api;
     private final transient ObjectMapper mapper = new ObjectMapper();
     private final transient Map<String, MethodDescriptor> methods = new TreeMap<>();
+    private final transient CircularFixedSizeList<String> commandHistory = new CircularFixedSizeList<>(10);
 
     public ConsoleDialog(SemuxGui gui, JFrame parent) {
 
@@ -72,6 +80,34 @@ public class ConsoleDialog extends JDialog implements ActionListener {
         input.addActionListener(this);
         input.setName("txtInput");
 
+        // add history for cycling through past commands
+        input.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(
+                "UP"), "historyBack");
+        input.getActionMap().put("historyBack", new AbstractAction() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String command = commandHistory.back();
+                if (command != null) {
+                    input.setText(command);
+                }
+            }
+        });
+        input.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(
+                "DOWN"), "historyForward");
+        input.getActionMap().put("historyForward", new AbstractAction() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String command = commandHistory.forward();
+                if (command != null) {
+                    input.setText(command);
+                }
+            }
+        });
+
         getContentPane().add(scroll, BorderLayout.CENTER);
         getContentPane().add(input, BorderLayout.SOUTH);
 
@@ -81,7 +117,7 @@ public class ConsoleDialog extends JDialog implements ActionListener {
         this.api = new org.semux.api.v2.SemuxApiImpl(gui.getKernel());
         for (Method m : SemuxApi.class.getMethods()) {
             MethodDescriptor md = parseMethod(m);
-            this.methods.put(md.name, md);
+            this.methods.put(Objects.requireNonNull(md).name, md);
         }
 
         console.append(GuiMessages.get("ConsoleHelp", HELP));
@@ -95,6 +131,7 @@ public class ConsoleDialog extends JDialog implements ActionListener {
     @Override
     public void actionPerformed(ActionEvent e) {
         String command = input.getText();
+        commandHistory.add(command);
 
         console.append("\n");
         console.append("> " + command);
@@ -121,8 +158,9 @@ public class ConsoleDialog extends JDialog implements ActionListener {
      * @param input
      */
     protected String callApi(String input) {
-        String[] commandArguments = input.split(" ");
-        String command = commandArguments[0];
+        List<String> commandArguments = CommandParser.parseInput(input);
+
+        String command = commandArguments.get(0);
 
         MethodDescriptor md = methods.get(command);
         if (md == null) {
@@ -131,12 +169,22 @@ public class ConsoleDialog extends JDialog implements ActionListener {
 
         try {
             Method method = api.getClass().getMethod(command, md.argumentTypes);
-            Object[] arguments = new Object[commandArguments.length - 1];
-            for (int i = 0; i < arguments.length; i++) {
+            Object[] arguments = new Object[md.argumentTypes.length];
+
+            if (arguments.length < commandArguments.size() - 1) {
+                return GuiMessages.get("MethodError", command);
+            }
+
+            for (int i = 0; i < commandArguments.size() - 1; i++) {
+                String argument = commandArguments.get(i + 1);
                 if (md.argumentTypes[i] == Boolean.class) {
-                    arguments[i] = Boolean.parseBoolean(commandArguments[i + 1]);
+                    arguments[i] = Boolean.parseBoolean(argument);
                 } else {
-                    arguments[i] = commandArguments[i + 1];
+                    if (NULL.equals(argument)) {
+                        arguments[i] = null;
+                    } else {
+                        arguments[i] = commandArguments.get(i + 1);
+                    }
                 }
             }
 
@@ -169,7 +217,17 @@ public class ConsoleDialog extends JDialog implements ActionListener {
             // not a web method
             return null;
         }
+
         StringBuilder builder = new StringBuilder();
+
+        ApiOperation apiOperation = method.getAnnotation(ApiOperation.class);
+
+        if (apiOperation != null) {
+            String description = apiOperation.value();
+            if (!description.trim().isEmpty()) {
+                builder.append(description).append("\n\t");
+            }
+        }
 
         builder.append(method.getName());
         for (Parameter parameter : method.getParameters()) {

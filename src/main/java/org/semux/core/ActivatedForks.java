@@ -63,7 +63,7 @@ public class ActivatedForks {
      * @param height
      */
     public boolean activateFork(Fork fork, long height) {
-        if (!isActivated(fork)
+        if (!isActivated(fork, height - 1)
                 && height <= fork.activationDeadline
                 && isActivated(fork, height)) {
             activatedForks.put(fork, new Fork.Activation(fork, height));
@@ -84,11 +84,6 @@ public class ActivatedForks {
      * @return
      */
     public boolean isActivated(Fork fork, final long height) {
-        // skips genesis block
-        if (height <= 1) {
-            return false;
-        }
-
         // checks whether the fork has been activated and recorded in database
         if (activatedForks.containsKey(fork)) {
             return height >= activatedForks.get(fork).activatedAt;
@@ -96,8 +91,8 @@ public class ActivatedForks {
 
         // checks whether the local blockchain has reached the fork activation
         // checkpoint
-        if (config.forkActivationCheckpoints().containsKey(fork)) {
-            return config.forkActivationCheckpoints().get(fork) <= height;
+        if (config.manuallyActivatedForks().containsKey(fork)) {
+            return config.manuallyActivatedForks().get(fork) <= height;
         }
 
         // returns memoized result of fork activation lookup at current height
@@ -110,7 +105,7 @@ public class ActivatedForks {
         // sets boundaries:
         // lookup from (height - 1)
         // to (height - fork.activationBlocksLookup)
-        final long higherBound = height - 1;
+        final long higherBound = Math.max(0, height - 1);
         final long lowerBound = Math.min(Math.max(height - fork.activationBlocksLookup, 1), higherBound);
         long activatedBlocks = 0;
 
@@ -137,11 +132,8 @@ public class ActivatedForks {
         // returns
         boolean activated = activatedBlocks >= fork.activationBlocks;
         if (activatedBlocks > 0) {
-            logger.debug("Fork activation of {} at height {}: {} / {} (activated = {}) in the past {} blocks",
-                    fork.name,
-                    height,
-                    activatedBlocks,
-                    fork.activationBlocks, activated, fork.activationBlocksLookup);
+            logger.debug("Fork: name = {}, status = {} / {}, require = {}, activated = {}",
+                    fork.name, activatedBlocks, fork.activationBlocksLookup, fork.activationBlocks, activated);
         }
 
         return activated;
@@ -154,7 +146,7 @@ public class ActivatedForks {
      * @return
      */
     public boolean isActivated(Fork fork) {
-        return activatedForks.containsKey(fork);
+        return isActivated(fork, chain.getLatestBlockNumber() + 1);
     }
 
     /**

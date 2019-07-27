@@ -6,8 +6,6 @@
  */
 package org.semux.bench;
 
-import static org.semux.core.Amount.Unit.NANO_SEM;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,25 +44,21 @@ public class BlockchainPerformance {
         List<Transaction> txs = new ArrayList<>();
         List<TransactionResult> res = new ArrayList<>();
 
-        int total = 0;
-        for (int i = 0;; i++) {
+        long remainingBlockGas = config.spec().maxBlockGasLimit();
+        for (int i = 0; remainingBlockGas >= config.spec().nonVMTransactionGasCost(); i++) {
             Network network = config.network();
             TransactionType type = TransactionType.TRANSFER;
             byte[] to = Bytes.random(20);
-            Amount value = NANO_SEM.of(1);
-            Amount fee = config.minTransactionFee();
+            Amount value = Amount.of(1);
+            Amount fee = config.spec().minTransactionFee();
             long nonce = 1 + i;
             long timestamp = TimeUtil.currentTimeMillis();
             byte[] data = Bytes.EMPTY_BYTES;
             Transaction tx = new Transaction(network, type, to, value, fee, nonce, timestamp, data).sign(key);
-
-            if (total + tx.size() > config.maxBlockTransactionsSize()) {
-                break;
-            }
-
             txs.add(tx);
             res.add(new TransactionResult());
-            total += tx.size();
+
+            remainingBlockGas -= config.spec().nonVMTransactionGasCost();
         }
 
         long number = 1;
@@ -81,7 +75,7 @@ public class BlockchainPerformance {
         Block block = new Block(header, txs, res);
 
         List<Signature> votes = new ArrayList<>();
-        for (int i = 0; i < config.getNumberOfValidators(1000000L); i++) {
+        for (int i = 0; i < config.spec().getNumberOfValidators(1000000L); i++) {
             votes.add(new Key().sign(Bytes.EMPTY_BYTES));
         }
         block.setView(1);
@@ -99,12 +93,12 @@ public class BlockchainPerformance {
     }
 
     public static void testBlockValidation(Block block) {
-        Genesis gen = Genesis.load(Network.DEVNET);
+        Genesis genesis = Genesis.load(Network.DEVNET);
 
         long t1 = System.nanoTime();
-        Block.validateHeader(gen.getHeader(), block.getHeader());
-        Block.validateTransactions(gen.getHeader(), block.getTransactions(), config.network());
-        Block.validateResults(gen.getHeader(), block.getResults());
+        block.validateHeader(block.getHeader(), genesis.getHeader());
+        block.validateTransactions(block.getHeader(), block.getTransactions(), config.network());
+        block.validateResults(block.getHeader(), block.getResults());
         // block votes validation skipped
         long t2 = System.nanoTime();
 
@@ -117,8 +111,8 @@ public class BlockchainPerformance {
         Network network = config.network();
         TransactionType type = TransactionType.TRANSFER;
         byte[] to = Bytes.random(20);
-        Amount value = NANO_SEM.of(1);
-        Amount fee = config.minTransactionFee();
+        Amount value = Amount.of(1);
+        Amount fee = config.spec().minTransactionFee();
         long nonce = 1;
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};

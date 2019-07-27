@@ -1,5 +1,81 @@
 # Change Log
 
+## [v2.0.0](https://github.com/semuxproject/semux-core/tree/v2.0.0) (2019-08-25)
+
+This release features the **virtual machine hardfork** and **HD wallet**.
+
+**Important notice**
+
+Please backup your wallet file, `wallet.data`, and do a full-sync with the network. Note that
+the configuration file has also been updated; suggest using the new one.
+
+**Bug fixes:**
+
+- Fixed a capacity codec bug in P2P handshake (#214)
+- Fixed the invalid transaction results in database issue (#221)
+- Fixed various EVM integration issues (#182, #183, #184, #190, #209, #210, #224, #229)
+
+**Improvements:**
+
+- Updated docs (#156, #158, #193)
+- Reset the `testnet` with new keys (#175, #176)
+- Packed JVM images in releases (#225)
+- Added support for quotes in console dialog (#203)
+
+**New features:**
+
+- Consensus
+    - Replaced the block size limit with a `20m` gas limit (#211, #213, #214)
+- Sync
+    - Added support for the experimental `FAST_SYNC` protocol (#155, #228, #232)
+- Wallet
+    - Added support for HD wallet (#173, #174, #231)
+- API
+    - Bumped the version to `v2.3.0`
+    - Added `gas` and `gasPrice` in the `TransactionType` response (#226)
+    - Added the `InternalTransactionType` (#188)
+    - Updated the `/trasaction/create` and `/trasaction/call` endpoints (#194)
+    - Updated the `/compose-raw-transaction` endpoint (#195)
+    - Updated the `/transaciton-result` endpoint (#219)
+- GUI
+    - Added support for quotes in console dialog (#203)
+
+
+## [v1.4.0](https://github.com/semuxproject/semux-core/tree/v1.4.0) (2019-04-22)
+
+This release includes incremental improvements and bugfixes since last version. Major changes
+are the block rewards adjustment and virtual machine implementation (in place but **not activated**).
+
+**Bugfixes:**
+- Fix the 2/3 BFT quorum size rounding error (#134, #142)
+- Start syncing when the number of connections is low (#130)
+
+**Improvements:**
+- Fast block validation using batch validation (#150)
+- Add `aarch64` native support (#89, #117)
+- Suggest use OpenJDK (#131)
+- Update error messages and descriptions (#81, #79, #94, #103)
+- Add empty password shortcut (#108)
+- Update dependent libraries (#79, #141)
+- Limit the number of validators on testnet (#123)
+
+**Features:**
+
+- Consensus
+    - Update the block reward function (#151)
+- VM
+    - Introduce the VM fork signal (#67, #137, #139)
+    - Refactor transaction results (#77, #149)
+    - VM tests (#90, #97, #113, #114, #117, #112, #129, #140)
+- Wallet
+    - HD wallet tests (#133, #132, #138)
+- API
+    - Bump version to v2.2.0
+    - Remove `blockNumber` from `*TransactionType`
+    - Add `/transaction-result` endpoint for transaction result
+- P2P
+    - Upgrade protocol to support light client (#146)
+
 ## [v1.3.0](https://github.com/semuxproject/semux-core/tree/v1.3.0) (2018-08-05)
 
 This release fix the validator timestamp issue and introduces fast syncing.
@@ -58,7 +134,6 @@ This release introduces Java 10 support plus a few API & documentation improveme
   - Add blockchain checkpoints
 - Security
   - Provide safe ways for automatic wallet unlock to address an issue that `--password` CLI option exposes wallet password to process explorer
-    - semux.properties: `wallet.password`
     - environment variable: `SEMUX_WALLET_PASSWORD`
 
 **Implemented enhancements:**

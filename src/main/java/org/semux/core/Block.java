@@ -154,7 +154,8 @@ public class Block {
      * @param isFixTxHash
      * @return
      */
-    public boolean validateTransactions(BlockHeader header, List<Transaction> transactions, Network network, boolean isFixTxHash) {
+    public boolean validateTransactions(BlockHeader header, List<Transaction> transactions, Network network,
+            boolean isFixTxHash) {
         return validateTransactions(header, transactions, transactions, network, isFixTxHash);
     }
 
@@ -178,11 +179,13 @@ public class Block {
 
         // validate transactions
         if (!Key.isVerifyBatchSupported() || unvalidatedTransactions.size() < 3) {
-            if (!unvalidatedTransactions.parallelStream().allMatch(tx -> tx.validate_verify_sign(network, isFixTxHash))) {
+            if (!unvalidatedTransactions.parallelStream()
+                    .allMatch(tx -> tx.validate_verify_sign(network, isFixTxHash))) {
                 return false;
             }
         } else {
-            if (!unvalidatedTransactions.parallelStream().allMatch(tx -> tx.validate_no_verify_sign(network, isFixTxHash))) {
+            if (!unvalidatedTransactions.parallelStream()
+                    .allMatch(tx -> tx.validate_no_verify_sign(network, isFixTxHash))) {
                 return false;
             }
 

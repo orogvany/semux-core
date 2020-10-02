@@ -69,7 +69,7 @@ public class TransactionExecutorTest {
     @Test
     public void testTransfer() {
         Key key = new Key();
-        
+
         TransactionType type = TransactionType.TRANSFER;
         byte[] from = key.toAddress();
         byte[] to = Bytes.random(20);
@@ -79,7 +79,8 @@ public class TransactionExecutorTest {
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = Bytes.random(16);
 
-        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled());
+        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled());
         tx.sign(key);
         assertTrue(tx.validate_verify_sign(network, config.forkEd25519ContractEnabled()));
 
@@ -120,21 +121,24 @@ public class TransactionExecutorTest {
         byte[] data = Bytes.random(16);
 
         // register delegate (to != EMPTY_ADDRESS, random name)
-        Transaction tx = new Transaction(network, type, to, delegate.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(delegate);
+        Transaction tx = new Transaction(network, type, to, delegate.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled())
+                        .sign(delegate);
         TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, 0);
         assertFalse(result.getCode().isSuccess());
 
         // register delegate (to == EMPTY_ADDRESS, random name)
-        tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, delegate.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(delegate);
+        tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, delegate.toAddress(), value, fee, nonce, timestamp,
+                data, config.forkEd25519ContractEnabled())
+                        .sign(delegate);
         result = exec.execute(tx, as.track(), ds.track(), block, 0);
         assertFalse(result.getCode().isSuccess());
 
         // register delegate (to == EMPTY_ADDRESS, normal name) and commit
         data = Bytes.of("test");
-        tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, delegate.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(delegate);
+        tx = new Transaction(network, type, Bytes.EMPTY_ADDRESS, delegate.toAddress(), value, fee, nonce, timestamp,
+                data, config.forkEd25519ContractEnabled())
+                        .sign(delegate);
 
         result = executeAndCommit(exec, tx, as.track(), ds.track(), block);
         assertTrue(result.getCode().isSuccess());
@@ -162,8 +166,9 @@ public class TransactionExecutorTest {
         byte[] data = {};
 
         // vote for non-existing delegate
-        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(voter);
+        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled())
+                        .sign(voter);
         TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, 0);
         assertFalse(result.getCode().isSuccess());
 
@@ -197,8 +202,9 @@ public class TransactionExecutorTest {
         byte[] data = {};
 
         // unvote (never voted before)
-        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(voter);
+        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled())
+                        .sign(voter);
         TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, 0);
         assertFalse(result.getCode().isSuccess());
         assertEquals(INSUFFICIENT_LOCKED, result.code);
@@ -237,8 +243,9 @@ public class TransactionExecutorTest {
         byte[] data = {};
 
         // unvote (never voted before)
-        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled())
-        	.sign(voter);
+        Transaction tx = new Transaction(network, type, to, voter.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled())
+                        .sign(voter);
 
         TransactionResult result = exec.execute(tx, as.track(), ds.track(), block, 0);
         assertFalse(result.getCode().isSuccess());

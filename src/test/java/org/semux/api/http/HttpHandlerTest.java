@@ -152,13 +152,14 @@ public class HttpHandlerTest {
     @Test
     public void testGETBigData() throws IOException {
         Config config = kernelRule.getKernel().getConfig();
-        
+
         Key key = new Key();
-        
-        final boolean isFixTxHashActivated = kernelRule.getKernel().getBlockchain().isForkActivated(Fork.ED25519_CONTRACT);
-        
+
+        final boolean isFixTxHashActivated = kernelRule.getKernel().getBlockchain()
+                .isForkActivated(Fork.ED25519_CONTRACT);
+
         Transaction tx = new Transaction(config.network(),
-                TransactionType.CALL, Bytes.random(20)/*to*/, key.toAddress()/*from*/,
+                TransactionType.CALL, Bytes.random(20)/* to */, key.toAddress()/* from */,
                 Amount.ZERO, Amount.ZERO, 0,
                 TimeUtil.currentTimeMillis(),
                 new byte[config.spec().maxTransactionDataSize(TransactionType.CALL)],

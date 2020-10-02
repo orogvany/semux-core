@@ -59,11 +59,10 @@ public class TransactionsPanelTest extends AssertJSwingJUnitTestCase {
     }
 
     @Test
-    public void testTransactions() 
-    {
-    	KernelMock kernel = kernelRule.getKernel();
-    	kernel.start();
-    	
+    public void testTransactions() {
+        KernelMock kernel = kernelRule.getKernel();
+        kernel.start();
+
         Key key = new Key();
         Amount $1 = Amount.of(1);
         WalletAccount acc = spy(new WalletAccount(key, new Account(key.toAddress(), $1, $1, 1), null));

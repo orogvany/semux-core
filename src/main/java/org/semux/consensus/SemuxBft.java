@@ -842,7 +842,8 @@ public class SemuxBft implements BftManager {
 
             // [2] check transactions
             List<Transaction> unvalidatedTransactions = getUnvalidatedTransactions(transactions);
-            if (!block.validateTransactions(header, unvalidatedTransactions, transactions, config.network(), kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
+            if (!block.validateTransactions(header, unvalidatedTransactions, transactions, config.network(),
+                    kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
                 logger.warn("Invalid transactions");
                 return false;
             }

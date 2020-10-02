@@ -794,7 +794,8 @@ public class BlockchainImpl implements Blockchain {
             }
 
             // [2] check transactions
-            if (!block.validateTransactions(header, transactions, config.network(), isForkActivated(Fork.ED25519_CONTRACT))) {
+            if (!block.validateTransactions(header, transactions, config.network(),
+                    isForkActivated(Fork.ED25519_CONTRACT))) {
                 logger.error("Invalid transactions");
                 return false;
             }

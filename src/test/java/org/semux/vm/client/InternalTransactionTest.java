@@ -94,7 +94,8 @@ public class InternalTransactionTest {
         long gas = 100000;
         Amount gasPrice = Amount.of(1);
 
-        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, Amount.ZERO, nonce, timestamp, contract, gas,
+        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, Amount.ZERO, nonce, timestamp,
+                contract, gas,
                 gasPrice, config.forkEd25519ContractEnabled());
         tx.sign(key);
 

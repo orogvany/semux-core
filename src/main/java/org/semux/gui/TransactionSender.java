@@ -31,7 +31,8 @@ public class TransactionSender {
         byte[] from = account.getKey().toAddress();
         long nonce = pendingMgr.getNonce(from);
         long timestamp = TimeUtil.currentTimeMillis();
-        Transaction tx = new Transaction(network, type, to, from, value, fee, nonce, timestamp, data, gas, gasPrice, kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT));
+        Transaction tx = new Transaction(network, type, to, from, value, fee, nonce, timestamp, data, gas, gasPrice,
+                kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT));
         tx.sign(account.getKey());
 
         return pendingMgr.addTransactionSync(tx);

@@ -24,7 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class Transaction {
-	private static final Logger logger = LoggerFactory.getLogger(Transaction.class);
+    private static final Logger logger = LoggerFactory.getLogger(Transaction.class);
 
     private final byte networkId;
 
@@ -67,7 +67,8 @@ public class Transaction {
      * @param gasPrice
      * @param isFixTxHash
      */
-    public Transaction(Network network, TransactionType type, byte[] to, byte[] from, Amount value, Amount fee, long nonce,
+    public Transaction(Network network, TransactionType type, byte[] to, byte[] from, Amount value, Amount fee,
+            long nonce,
             long timestamp, byte[] data, long gas, Amount gasPrice, boolean isFixTxHash) {
         this.networkId = network.id();
         this.type = type;
@@ -96,7 +97,7 @@ public class Transaction {
         }
         this.encoded = enc.toBytes();
         this.hash = Hash.h256_s(encoded, isFixTxHash ? from : null);
-        
+
         logger.info("!!! isFixTxHash = " + isFixTxHash);
     }
 
@@ -110,7 +111,7 @@ public class Transaction {
      */
     private Transaction(byte[] hash, byte[] encoded, byte[] signature, boolean isFixTxHash) {
         this.hash = hash;
-        
+
         this.signature = Signature.fromBytes(signature);
 
         Transaction decodedTx = fromEncoded(encoded, this.signature.getAddress(), isFixTxHash);
@@ -127,11 +128,12 @@ public class Transaction {
         this.gasPrice = decodedTx.gasPrice;
 
         this.encoded = encoded;
-        
+
         logger.info("isFixTxHash = " + isFixTxHash);
     }
 
-    public Transaction(Network network, TransactionType type, byte[] toAddress, byte[] fromAddress, Amount value, Amount fee, long nonce,
+    public Transaction(Network network, TransactionType type, byte[] toAddress, byte[] fromAddress, Amount value,
+            Amount fee, long nonce,
             long timestamp, byte[] data, boolean isFixTxHash) {
         this(network, type, toAddress, fromAddress, value, fee, nonce, timestamp, data, 0, Amount.ZERO, isFixTxHash);
     }
@@ -169,9 +171,9 @@ public class Transaction {
      * @return true if success, otherwise false
      */
     private boolean validate(Network network, boolean verifySignature, boolean isFixTxHash) {
-    	
-    	logger.info("isFixTxHash = " + isFixTxHash);
-    	
+
+        logger.info("isFixTxHash = " + isFixTxHash);
+
         return hash != null && hash.length == Hash.HASH_LEN
                 && networkId == network.id()
                 && type != null
@@ -200,7 +202,7 @@ public class Transaction {
     public boolean validate_verify_sign(Network network, boolean isFixTxHash) {
         return validate(network, true, isFixTxHash);
     }
-    
+
     public boolean validate_no_verify_sign(Network network, boolean isFixTxHash) {
         return validate(network, false, isFixTxHash);
     }
@@ -317,9 +319,9 @@ public class Transaction {
      * @return the decoded transaction
      */
     public static Transaction fromEncoded(byte[] encoded, byte[] from, boolean isFixTxHash) {
-    	
+
         System.out.println("isFixTxHash = " + isFixTxHash);
-    	
+
         SimpleDecoder decoder = new SimpleDecoder(encoded);
 
         byte networkId = decoder.readByte();

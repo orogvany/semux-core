@@ -294,7 +294,8 @@ public class TransactionBuilder {
             }
         }
 
-        return new Transaction(network, type, to, from, value, fee, nonce, timestamp, data, gas, gasPrice, kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT));
+        return new Transaction(network, type, to, from, value, fee, nonce, timestamp, data, gas, gasPrice,
+                kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT));
     }
 
     public Transaction buildSigned() {
@@ -304,9 +305,8 @@ public class TransactionBuilder {
 
         return buildUnsigned(account.toAddress()).sign(account);
     }
-    
-    public byte[] To ()
-    {
-    	return to;
+
+    public byte[] To() {
+        return to;
     }
 }

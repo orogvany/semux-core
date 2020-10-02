@@ -55,12 +55,11 @@ public class BlockchainImplTest {
     private long nonce = 12345;
     private byte[] data = Bytes.of("test");
     private long timestamp = TimeUtil.currentTimeMillis() - 60 * 1000;
-    
-    private Transaction NewTx()
-    {
-    	return new Transaction(network, TransactionType.TRANSFER, to, key.toAddress(), value, fee, nonce, timestamp,
-    						   data, chain.isForkActivated(Fork.ED25519_CONTRACT)).sign(key);
-    }            
+
+    private Transaction NewTx() {
+        return new Transaction(network, TransactionType.TRANSFER, to, key.toAddress(), value, fee, nonce, timestamp,
+                data, chain.isForkActivated(Fork.ED25519_CONTRACT)).sign(key);
+    }
 
     @Before
     public void setUp() {
@@ -139,8 +138,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransaction() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertNull(chain.getTransaction(tx.getHash()));
 
         Block newBlock = createBlock(1);
@@ -158,8 +157,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testHasTransaction() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertFalse(chain.hasTransaction(tx.getHash()));
 
         Block newBlock = createBlock(1);
@@ -170,8 +169,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransactionResult() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertNull(chain.getTransaction(tx.getHash()));
 
         Block newBlock = createBlock(1);
@@ -183,8 +182,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetInternalTransaction() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertNull(chain.getTransaction(tx.getHash()));
 
         byte[] rootTxHash = Bytes.random(32);
@@ -230,8 +229,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransactionBlockNumber() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         Block newBlock = createBlock(1);
         chain.addBlock(newBlock);
 
@@ -255,8 +254,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransactionCount() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertNull(chain.getTransaction(tx.getHash()));
 
         Block newBlock = createBlock(1);
@@ -267,8 +266,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetAccountTransactions() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         assertNull(chain.getTransaction(tx.getHash()));
 
         Block newBlock = createBlock(1);
@@ -282,7 +281,7 @@ public class BlockchainImplTest {
     @Test
     public void testSerialization() {
         Block block1 = createBlock(1);
-        
+
         Block block2 = Block.fromComponents(block1.getEncodedHeader(), block1.getEncodedTransactions(),
                 block1.getEncodedResults(),
                 block1.getEncodedVotes());
@@ -296,8 +295,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransactions() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         Block block = createBlock(1);
         chain.addBlock(block);
 
@@ -312,7 +311,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testGetTransactionsSelfTx() {
-        Transaction selfTx = new Transaction(network, TransactionType.TRANSFER, key.toAddress(), key.toAddress(), value, fee, nonce,
+        Transaction selfTx = new Transaction(network, TransactionType.TRANSFER, key.toAddress(), key.toAddress(), value,
+                fee, nonce,
                 timestamp, data, chain.isForkActivated(Fork.ED25519_CONTRACT)).sign(key);
         Block block = createBlock(
                 1,
@@ -349,8 +349,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testForkActivated() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         final Fork fork = Fork.UNIFORM_DISTRIBUTION;
         for (long i = 1; i <= fork.blocksToCheck(); i++) {
             chain.addBlock(
@@ -368,8 +368,8 @@ public class BlockchainImplTest {
 
     @Test
     public void testForkCompatibility() {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         Fork fork = Fork.UNIFORM_DISTRIBUTION;
         Block block = createBlock(1, coinbase, new BlockHeaderData(ForkSignalSet.of(fork)).toBytes(),
                 Collections.singletonList(tx), Collections.singletonList(res));
@@ -379,8 +379,8 @@ public class BlockchainImplTest {
     }
 
     private Block createBlock(long number) {
-    	Transaction tx = NewTx();
-    	
+        Transaction tx = NewTx();
+
         return createBlock(number, Collections.singletonList(tx), Collections.singletonList(res));
     }
 

@@ -32,9 +32,8 @@ public enum Fork implements Comparable<Fork> {
     VOTING_PRECOMPILED_UPGRADE((short) 3, 1500, 2000),
 
     /**
-     * This soft fork adds:
-     *  - new pre-compiled contracts for ED25519 as well as will
-     *  - new TX hash
+     * This soft fork adds: - new pre-compiled contracts for ED25519 as well as will
+     * - new TX hash
      */
     ED25519_CONTRACT((short) 4, 1500, 2000);
 

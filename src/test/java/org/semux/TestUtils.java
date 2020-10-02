@@ -69,7 +69,8 @@ public class TestUtils {
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};
 
-        return new Transaction(network, type, to.toAddress(), from.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled()).sign(from);
+        return new Transaction(network, type, to.toAddress(), from.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled()).sign(from);
     }
 
     // Source:

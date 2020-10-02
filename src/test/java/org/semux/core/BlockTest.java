@@ -38,16 +38,15 @@ public class BlockTest {
     private long timestamp = TimeUtil.currentTimeMillis();
     private byte[] data = Bytes.of("data");
 
-    private Transaction NewTx ()
-    {
-    	Key key = new Key();
-    	
-    	return new Transaction(Network.DEVNET, TransactionType.TRANSFER, Bytes.random(20), key.toAddress(), ZERO,
-    			config.spec().minTransactionFee(),
-    			1, TimeUtil.currentTimeMillis(), Bytes.EMPTY_BYTES,
-    			config.forkEd25519ContractEnabled()).sign(key);
+    private Transaction NewTx() {
+        Key key = new Key();
+
+        return new Transaction(Network.DEVNET, TransactionType.TRANSFER, Bytes.random(20), key.toAddress(), ZERO,
+                config.spec().minTransactionFee(),
+                1, TimeUtil.currentTimeMillis(), Bytes.EMPTY_BYTES,
+                config.forkEd25519ContractEnabled()).sign(key);
     }
-    	
+
     private TransactionResult res = new TransactionResult();
     private List<Transaction> transactions = Collections.singletonList(NewTx());
     private List<TransactionResult> results = Collections.singletonList(res);
@@ -126,7 +125,8 @@ public class BlockTest {
         Block block = new Block(header, transactions);
 
         assertTrue(block.validateHeader(header, previousHeader));
-        assertTrue(block.validateTransactions(previousHeader, transactions, Network.DEVNET, config.forkEd25519ContractEnabled()));
+        assertTrue(block.validateTransactions(previousHeader, transactions, Network.DEVNET,
+                config.forkEd25519ContractEnabled()));
         assertTrue(block.validateResults(previousHeader, results));
     }
 

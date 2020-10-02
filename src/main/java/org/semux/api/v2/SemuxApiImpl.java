@@ -168,8 +168,11 @@ public final class SemuxApiImpl implements SemuxApi {
                     .withData(data)
                     .withGas(gas)
                     .withGasPrice(gasPrice);
-                       
-            /*We can use TO address instead FROM address, only if transaction will be used for ComposeRawTransactionResponse*/
+
+            /*
+             * We can use TO address instead FROM address, only if transaction will be used
+             * for ComposeRawTransactionResponse
+             */
             Transaction transaction = transactionBuilder.buildUnsigned(transactionBuilder.To());
 
             ComposeRawTransactionResponse resp = new ComposeRawTransactionResponse();
@@ -665,7 +668,8 @@ public final class SemuxApiImpl implements SemuxApi {
                 return badRequest("Address doesn't belong to this wallet.");
             }
 
-            Transaction tx = Transaction.fromEncoded(txBytes, signerKey.toAddress(), kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT)).sign(signerKey);
+            Transaction tx = Transaction.fromEncoded(txBytes, signerKey.toAddress(),
+                    kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT)).sign(signerKey);
 
             SignRawTransactionResponse resp = new SignRawTransactionResponse();
             resp.setResult(Hex.encode0x(tx.toBytes()));

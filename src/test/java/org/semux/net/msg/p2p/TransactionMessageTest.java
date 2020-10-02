@@ -29,7 +29,7 @@ public class TransactionMessageTest {
         long nonce = 1;
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = Bytes.of("data");
-        
+
         Key key = new Key();
 
         Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data, true);

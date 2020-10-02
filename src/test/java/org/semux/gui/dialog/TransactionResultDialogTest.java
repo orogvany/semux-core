@@ -43,7 +43,7 @@ public class TransactionResultDialogTest extends AssertJSwingJUnitTestCase {
 
     @Test
     public void testTransactionResult() {
-    	Kernel kernel = kernelRule1.getKernel();
+        Kernel kernel = kernelRule1.getKernel();
         kernel.start();
 
         Key from = new Key();
@@ -56,7 +56,8 @@ public class TransactionResultDialogTest extends AssertJSwingJUnitTestCase {
         long gas = 10_000;
         Amount gasPrice = Amount.of(10);
         Transaction tx = new Transaction(kernel.getConfig().network(), CREATE, to.toAddress(), from.toAddress(),
-        		value, fee, nonce, now, data, gas, gasPrice, kernel.getConfig().forkEd25519ContractEnabled()).sign(from);
+                value, fee, nonce, now, data, gas, gasPrice, kernel.getConfig().forkEd25519ContractEnabled())
+                        .sign(from);
 
         TransactionResult result = new TransactionResult();
         result.setCode(TransactionResult.Code.FAILURE);

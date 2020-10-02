@@ -54,7 +54,8 @@ public class BlockchainPerformance {
             long nonce = 1 + i;
             long timestamp = TimeUtil.currentTimeMillis();
             byte[] data = Bytes.EMPTY_BYTES;
-            Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled()).sign(key);
+            Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data,
+                    config.forkEd25519ContractEnabled()).sign(key);
             txs.add(tx);
             res.add(new TransactionResult());
 
@@ -97,7 +98,8 @@ public class BlockchainPerformance {
 
         long t1 = System.nanoTime();
         block.validateHeader(block.getHeader(), genesis.getHeader());
-        block.validateTransactions(block.getHeader(), block.getTransactions(), config.network(), config.forkEd25519ContractEnabled());
+        block.validateTransactions(block.getHeader(), block.getTransactions(), config.network(),
+                config.forkEd25519ContractEnabled());
         block.validateResults(block.getHeader(), block.getResults());
         // block votes validation skipped
         long t2 = System.nanoTime();
@@ -116,7 +118,8 @@ public class BlockchainPerformance {
         long nonce = 1;
         long timestamp = TimeUtil.currentTimeMillis();
         byte[] data = {};
-        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled());
+        Transaction tx = new Transaction(network, type, to, key.toAddress(), value, fee, nonce, timestamp, data,
+                config.forkEd25519ContractEnabled());
         tx.sign(key);
 
         int repeat = 1000;

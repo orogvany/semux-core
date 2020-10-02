@@ -72,7 +72,8 @@ public class CorePerformanceTest {
             long timestamp = TimeUtil.currentTimeMillis();
             byte[] data = Bytes.random(16);
 
-            Transaction tx = new Transaction(Network.DEVNET, type, to, key.toAddress(), value, fee, nonce, timestamp, data, config.forkEd25519ContractEnabled());
+            Transaction tx = new Transaction(Network.DEVNET, type, to, key.toAddress(), value, fee, nonce, timestamp,
+                    data, config.forkEd25519ContractEnabled());
             tx.sign(key);
             txs.add(tx);
         }

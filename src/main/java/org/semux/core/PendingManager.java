@@ -167,7 +167,8 @@ public class PendingManager implements Runnable, BlockchainListener {
 
         if (queue.size() < QUEUE_SIZE_LIMIT
                 && processedTxs.getIfPresent(hash) == null
-                && tx.validate_verify_sign(kernel.getConfig().network(), kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
+                && tx.validate_verify_sign(kernel.getConfig().network(),
+                        kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
             // NOTE: re-insertion doesn't affect item order
             queue.put(ByteArray.of(tx.getHash()), tx);
         }
@@ -186,7 +187,8 @@ public class PendingManager implements Runnable, BlockchainListener {
             return new ProcessingResult(0, TransactionResult.Code.INVALID_NONCE);
         }
 
-        if (tx.validate_verify_sign(kernel.getConfig().network(), kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
+        if (tx.validate_verify_sign(kernel.getConfig().network(),
+                kernel.getBlockchain().isForkActivated(Fork.ED25519_CONTRACT))) {
             // proceed with the tx, ignoring transaction queue size limit
             return processTransaction(tx, false, true);
         } else {

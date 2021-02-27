@@ -89,7 +89,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
  * </ul>
  */
 public class SemuxBft implements BftManager {
-    private static final Logger logger = LoggerFactory.getLogger(SemuxBft.class);
+    protected Logger logger = LoggerFactory.getLogger(SemuxBft.class);
 
     protected Kernel kernel;
     protected Config config;

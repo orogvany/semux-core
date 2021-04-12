@@ -21,6 +21,7 @@ import org.bitlet.weupnp.GatewayDiscover;
 import org.semux.api.SemuxApiService;
 import org.semux.config.Config;
 import org.semux.config.Constants;
+import org.semux.consensus.MultiBft;
 import org.semux.consensus.SemuxBft;
 import org.semux.consensus.SemuxSync;
 import org.semux.core.BftManager;
@@ -183,7 +184,7 @@ public class Kernel {
         // start sync/consensus
         // ====================================
         sync = new SemuxSync(this);
-        bft = new SemuxBft(this);
+        bft = new MultiBft(this);
 
         consThread = new Thread(bft::start, "consensus");
         consThread.start();

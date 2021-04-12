@@ -11,6 +11,7 @@ import org.semux.crypto.Hex;
 import org.semux.crypto.Key;
 import org.semux.net.Channel;
 import org.semux.net.msg.Message;
+import org.semux.util.Bytes;
 
 public class MultiBft extends SemuxBft
 {
@@ -28,6 +29,15 @@ public class MultiBft extends SemuxBft
         Map<String, Key> keys = new HashMap<>();
 
         //todo - configuration of keys or get from wallet
+        // for now can just do
+//        try
+//        {
+//            keys.put("NameOfDelegate",new Key(Hex.decode0x("0xprivateKey")));
+//            //repeat as necessary, don't do the key that your main keybase is for.
+//        } catch (InvalidKeySpecException e)
+//        {
+//            e.printStackTrace();
+//        }
 
         for (Map.Entry<String, Key> key : keys.entrySet())
         {
